@@ -1100,6 +1100,7 @@ class InvestmentStatement
             asset_sub_class: classification_bucket(holding.security, :asset_sub_class, "cash"),
             id: holding.security_id,
             name: holding.security.name.presence || holding.security.ticker,
+            held_directly: true,
             value: value
           } ]
         else
@@ -1110,8 +1111,15 @@ class InvestmentStatement
             {
               asset_class: constituent ? classification_bucket(constituent, :asset_class, "liquidity") : UNCLASSIFIED,
               asset_sub_class: constituent ? classification_bucket(constituent, :asset_sub_class, "cash") : UNCLASSIFIED,
-              id: key,
+              # ONE IDENTITY PER EXPOSURE. A direct holding keys on its
+              # `security_id`, so a resolved constituent must key on the security
+              # it resolved to or the same position renders twice -- once as the
+              # share you hold and once as the share inside the fund. An
+              # unresolved ticker has no security to key on (#214 ambiguity) and
+              # keeps its ticker, which is also why it cannot merge with anything.
+              id: constituent ? constituent.id : key,
               name: names[key].presence || key,
+              held_directly: false,
               value: value * weight
             }
           end
@@ -1329,14 +1337,26 @@ class InvestmentStatement
     def allocation_holdings_within(column, bucket, cash_bucket = nil, look_through: false)
       if look_through
         grouped = Hash.new(0)
-        names = {}
+        # Two name sources, resolved in a fixed order rather than by whichever
+        # row the portfolio happened to yield first. A position held directly is
+        # labelled by its own security; a position reached only through a fund is
+        # labelled by the constituent row, which is the label that survives an
+        # ambiguous listing (#214).
+        direct_names = {}
+        constituent_names = {}
         look_through_rows.each do |row|
           next unless row[column] == bucket
 
           grouped[row[:id]] += row[:value]
-          names[row[:id]] ||= row[:name]
+          if row[:held_directly]
+            direct_names[row[:id]] ||= row[:name]
+          else
+            constituent_names[row[:id]] ||= row[:name]
+          end
         end
-        return build_segments(grouped.map { |id, value| [ id, names[id], value ] })
+        return build_segments(
+          grouped.map { |id, value| [ id, direct_names[id] || constituent_names[id], value ] }
+        )
       end
 
       rows = holdings_classified_as(column, bucket, cash_bucket).map do |holding|

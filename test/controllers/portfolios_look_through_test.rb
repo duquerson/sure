@@ -133,9 +133,15 @@ class PortfoliosLookThroughTest < ActionDispatch::IntegrationTest
     # held position -- SHR1 and BND1 exist only as constituents -- so the
     # grandchild rows simply vanish and every assertion above still passes
     # (cubic and CodeRabbit, #226).
-    assert_select "[data-portfolio-child='stock'] [data-portfolio-grandchild='SHR1']", { count: 1, text: /A share/ },
+    # Keyed on the SECURITY each constituent resolved to, not on its ticker, so
+    # a position held both directly and through a fund lands on one row rather
+    # than two. An unresolved ticker keeps its ticker and cannot merge.
+    share = Security.find_by!(ticker: "SHR1")
+    bond = Security.find_by!(ticker: "BND1")
+
+    assert_select "[data-portfolio-child='stock'] [data-portfolio-grandchild='#{share.id}']", { count: 1, text: /A share/ },
                   "the stock sub-class did not open onto the constituent it came from"
-    assert_select "[data-portfolio-child='bond'] [data-portfolio-grandchild='BND1']", { count: 1, text: /A bond/ },
+    assert_select "[data-portfolio-child='bond'] [data-portfolio-grandchild='#{bond.id}']", { count: 1, text: /A bond/ },
                   "the bond sub-class did not open onto the constituent it came from"
     assert_select "[data-portfolio-grandchild='#{fund.id}']", { count: 0 },
                   "the bottom level showed the fund in place of what it holds"

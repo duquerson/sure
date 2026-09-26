@@ -1836,16 +1836,41 @@ class InvestmentStatementTest < ActiveSupport::TestCase
   # sub-class opens onto the CONSTITUENTS, named from the constituent row.
   test "a looked-through sub-class opens onto the constituents themselves" do
     account = create_investment_account(balance: 1000, cash_balance: 0)
-    create_classified_security(ticker: "SHR8", asset_class: "equity", asset_sub_class: "stock")
+    share = create_classified_security(ticker: "SHR8", asset_class: "equity", asset_sub_class: "stock")
     fund = create_classified_security(ticker: "MIX8", asset_class: "equity", asset_sub_class: "etf")
     fund.constituents.create!(ticker: "SHR8", name: "A share", weight: 100)
     Holding.create!(account: account, security: fund, date: Date.current, qty: 1, price: 1000, amount: 1000, currency: "USD")
 
     rows = @statement.allocation_children("asset_sub_class", "stock", look_through: true)
 
-    assert_equal [ "SHR8" ], rows.map(&:id), "the bottom row was the fund, not what it holds"
+    # Keyed on the security the constituent RESOLVED to, not on its ticker, so
+    # it can merge with the same security held directly. The label still comes
+    # from the constituent row.
+    assert_equal [ share.id ], rows.map(&:id), "the bottom row was the fund, not what it holds"
     assert_equal "A share", rows.first.name, "the row was not named from the constituent"
     assert_equal 1000, rows.first.amount.amount.to_i
+  end
+
+  # One exposure is one row however it is reached. Holding a share directly AND
+  # inside a fund used to render it twice -- the direct row keyed on
+  # `security_id`, the constituent row on its ticker -- which is the one case
+  # none of the tests above covered, and it made the bottom level overstate the
+  # number of positions while each row understated the exposure.
+  test "a security held directly and through a fund is one row, not two" do
+    account = create_investment_account(balance: 1000, cash_balance: 0)
+    share = create_classified_security(ticker: "SHR9", asset_class: "equity", asset_sub_class: "stock")
+    fund = create_classified_security(ticker: "MIX9", asset_class: "equity", asset_sub_class: "etf")
+    fund.constituents.create!(ticker: "SHR9", name: "A share", weight: 100)
+    Holding.create!(account: account, security: share, date: Date.current, qty: 1, price: 400, amount: 400, currency: "USD")
+    Holding.create!(account: account, security: fund, date: Date.current, qty: 1, price: 600, amount: 600, currency: "USD")
+
+    rows = @statement.allocation_children("asset_sub_class", "stock", look_through: true)
+
+    assert_equal [ share.id ], rows.map(&:id), "the same exposure rendered as two rows"
+    assert_equal 1000, rows.first.amount.amount.to_i,
+                 "400 held directly plus 600 through the fund is one 1,000 exposure"
+    assert_equal share.name.presence || share.ticker, rows.first.name,
+                 "a position held directly is named by its own security, not by a fund's label for it"
   end
 
   # A directly held position must not vanish when the toggle goes on.
