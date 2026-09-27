@@ -189,6 +189,46 @@ Two corollaries:
   the new test fail. A test written after a fix tends to assert the author's
   mental model, which is the thing that was wrong.
 
+#### The other direction: grep the siblings, not just the callers
+
+The question above points **downstream**, at whoever calls the line being
+changed. It does not catch the miss that keeps happening, which is **lateral**:
+other code reading the same source, which should have changed alongside it.
+
+So ask a second question before pushing:
+
+> **What else reads what I just changed the reading of?**
+
+Both of these shipped on #226 and were caught by review rather than by the
+author, and both were one grep away:
+
+- A parent filter was threaded into `allocation_holdings_within`'s look-through
+  branch. `holdings_classified_as` -- the flat branch's selector -- had the
+  identical defect and was left alone, so half the ladder stayed broken.
+- `allocatable_holdings` was introduced to exclude corrupt rows, and the child
+  paths were routed through it. Four parent segment builders
+  (`allocation_by_classification`, `_by_currency`, `_by_kind`, `_by_tag`) still
+  read `current_holdings`, so the levels disagreed one step above where the
+  test was looking.
+
+**How to apply.**
+
+- **When a fix replaces a direct use of X with a new helper, `grep -n "X"` and
+  enumerate every remaining use.** Each is either deliberately unchanged with a
+  stated reason, or a sibling that was missed. Write the list out; do not
+  eyeball it. Say in the commit message which siblings were found and why any
+  were left.
+- **A method with two paths is an invitation to fix half a bug.** Wherever there
+  is `if look_through ... else ...`, cached/uncached, sync/async -- fixing one
+  path means checking the other in the same change.
+- **Assert a new invariant at every level it claims to hold**, not at the level
+  being edited. Both misses above had the matching test gap: the assertion sat
+  where the author was already looking.
+- **Treat a review finding as a symptom report, not a work order.** A reviewer
+  names one call site because that is where they happened to look; the defect
+  lives wherever the pattern does. Shipping the narrow fix means the next review
+  finds the siblings, at the cost of a full cycle each time.
+
 ### Assert the delta, not the presence
 
 **A test that asserts a thing EXISTS passes when something else put it there.**
