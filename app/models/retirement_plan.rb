@@ -21,6 +21,19 @@ class RetirementPlan < ApplicationRecord
     find_by(user: user) || new(user: user)
   end
 
+  # The form speaks in percent; the columns hold fractions. Blank stays blank,
+  # which for the savings rate means "derive it".
+  %i[safe_withdrawal_rate expected_annual_return savings_rate].each do |attribute|
+    define_method(:"#{attribute}_percent") do
+      value = public_send(attribute)
+      value && (value * 100)
+    end
+
+    define_method(:"#{attribute}_percent=") do |percent|
+      public_send(:"#{attribute}=", percent.blank? ? nil : percent.to_s.to_d / 100)
+    end
+  end
+
   # The account types whose balance is money the user could live off:
   # cash, and what is invested. A property or a vehicle is wealth, but not a
   # portfolio a withdrawal rate can be applied to.

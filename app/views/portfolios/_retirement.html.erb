@@ -1,0 +1,13 @@
+<%# locals: (statement:, period:, as_of:, retirement:) %>
+
+<%# The simple FIRE tier (#127, 8.1). Not tied to the period picker: the FI
+    number and the projection are about the future, and read the registry's
+    `as_of` rather than the period's range. %>
+<div class="px-4 pb-4">
+  <%= render RetirementPlans::SummaryComponent.new(
+    projection: retirement[:projection],
+    currency: statement.family.currency,
+    unconverted_count: retirement[:unconverted_count],
+    show_chart: true
+  ) %>
+</div>

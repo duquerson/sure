@@ -13,7 +13,7 @@ class Portfolio::SectionRegistryTest < ActiveSupport::TestCase
   test "registers the built-in sections with their partials and locals" do
     sections = registry.sections
 
-    assert_equal %w[kpis performance index_chart comparison drivers value_chart realized_gains holdings accounts allocation data_quality], sections.map { |s| s[:key] }
+    assert_equal %w[kpis performance index_chart comparison drivers value_chart realized_gains holdings accounts allocation data_quality retirement], sections.map { |s| s[:key] }
     assert_equal %w[portfolios/kpi_row portfolios/performance portfolios/index_chart portfolios/comparison], sections.first(4).map { |s| s[:partial] }
     assert sections.all? { |s| s[:collapsible] }
 
@@ -456,7 +456,10 @@ class Portfolio::SectionRegistryTest < ActiveSupport::TestCase
     # period with no computable figure is a fact worth stating, where a
     # vanishing section reads as "this page does not do returns". The same
     # argument #171 made for realised P&L, which is why both are here.
-    assert_equal %w[kpis performance value_chart realized_gains], empty.select { |s| s[:visible] }.map { |s| s[:key] }
+    # `retirement` is the viewer's own FIRE card (#127): it is about their
+    # spending and savings, not this family's holdings, and says what is
+    # missing when there is no spending to work from.
+    assert_equal %w[kpis performance value_chart realized_gains retirement], empty.select { |s| s[:visible] }.map { |s| s[:key] }
   end
 
   test "passes the sort, direction and grouping through to the holdings and allocation locals" do
@@ -490,7 +493,7 @@ class Portfolio::SectionRegistryTest < ActiveSupport::TestCase
   test "orders sections by the user's saved order, appending anything it omits" do
     @user.update_section_preferences("portfolio", order: %w[value_chart kpis])
 
-    assert_equal %w[value_chart kpis performance index_chart comparison drivers realized_gains holdings accounts allocation data_quality],
+    assert_equal %w[value_chart kpis performance index_chart comparison drivers realized_gains holdings accounts allocation data_quality retirement],
                  registry.sections.map { |s| s[:key] }
   end
 
@@ -506,7 +509,7 @@ class Portfolio::SectionRegistryTest < ActiveSupport::TestCase
   test "ignores keys in the saved order that no longer exist" do
     @user.update_section_preferences("portfolio", order: %w[gone value_chart])
 
-    assert_equal %w[value_chart kpis performance index_chart comparison drivers realized_gains holdings accounts allocation data_quality],
+    assert_equal %w[value_chart kpis performance index_chart comparison drivers realized_gains holdings accounts allocation data_quality retirement],
                  registry.sections.map { |s| s[:key] }
   end
 
@@ -523,7 +526,7 @@ class Portfolio::SectionRegistryTest < ActiveSupport::TestCase
     sections = registry(extra_sections: [ stub ]).sections
 
     assert_equal "stub", sections.last[:key]
-    assert_equal 12, sections.size
+    assert_equal 13, sections.size
   end
 
   test "a saved order can place an extra section among the built-ins" do
@@ -531,7 +534,7 @@ class Portfolio::SectionRegistryTest < ActiveSupport::TestCase
              locals: {}, visible: true, collapsible: true }
     @user.update_section_preferences("portfolio", order: %w[stub kpis])
 
-    assert_equal %w[stub kpis performance index_chart comparison drivers value_chart realized_gains holdings accounts allocation data_quality],
+    assert_equal %w[stub kpis performance index_chart comparison drivers value_chart realized_gains holdings accounts allocation data_quality retirement],
                  registry(extra_sections: [ stub ]).sections.map { |s| s[:key] }
   end
 
