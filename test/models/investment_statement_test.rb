@@ -1926,12 +1926,20 @@ class InvestmentStatementTest < ActiveSupport::TestCase
     corrupt.update_columns(amount: -500)
 
     [ false, true ].each do |look_through|
+      # The TOP level too, not just the two below it. The first pass at this
+      # routed the child paths through the positive filter and left the segment
+      # builders on the unfiltered holdings, so the ladder still disagreed with
+      # itself -- one level up from where the test was looking (CodeRabbit).
+      top = @statement.allocation_by("asset_class", look_through: look_through)
+      equity = top.find { |r| r.id == "equity" }
       parent = @statement.allocation_children("asset_class", "equity", look_through: look_through)
       stock = parent.find { |r| r.id == "stock" }
       bottom = @statement.allocation_children(
         "asset_sub_class", "stock", look_through: look_through, parent: "equity"
       )
 
+      assert_equal 1000, equity.amount.amount.to_i,
+                   "look_through=#{look_through}: the top-level segment netted the corrupt row in"
       assert_equal 1000, stock.amount.amount.to_i,
                    "look_through=#{look_through}: the negative row netted against the good one a level up"
       assert_equal 1000, bottom.sum { |r| r.amount.amount }.to_i,

@@ -918,7 +918,7 @@ class InvestmentStatement
 
     def allocation_by_currency
       grouped = Hash.new(0)
-      current_holdings.each { |holding| grouped[holding.currency] += convert_to_family_currency(holding.amount, holding.currency) }
+      allocatable_holdings.each { |holding| grouped[holding.currency] += convert_to_family_currency(holding.amount, holding.currency) }
       investment_accounts.each do |account|
         cash = account.cash_balance.to_d
         grouped[account.currency] += convert_to_family_currency(cash, account.currency) if cash.positive?
@@ -928,7 +928,7 @@ class InvestmentStatement
 
     def allocation_by_kind
       grouped = Hash.new(0)
-      current_holdings.each do |holding|
+      allocatable_holdings.each do |holding|
         kind = if holding.security.cash? then "cash"
         elsif holding.security.crypto? then "crypto"
         else "standard"
@@ -1027,7 +1027,7 @@ class InvestmentStatement
     def allocation_by_classification(column, cash_bucket: nil, look_through: false)
       grouped = Hash.new(0)
 
-      current_holdings.each do |holding|
+      allocatable_holdings.each do |holding|
         value = convert_to_family_currency(holding.amount, holding.currency)
         split = look_through ? look_through_split(holding.security, column, value, cash_bucket) : nil
 
@@ -1265,7 +1265,7 @@ class InvestmentStatement
         .group_by(&:first)
         .transform_values { |rows| rows.map(&:last) }
 
-      current_holdings.each do |holding|
+      allocatable_holdings.each do |holding|
         value = convert_to_family_currency(holding.amount, holding.currency)
         ids = tag_ids_by_security.fetch(holding.security_id, [])
 
