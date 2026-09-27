@@ -1885,6 +1885,62 @@ class InvestmentStatementTest < ActiveSupport::TestCase
     assert_equal 1000, rows.first.amount.amount.to_i
   end
 
+  # A sub-class NAME is not unique across asset classes -- `unclassified` is
+  # reachable from every one of them -- so the bottom level has to be told which
+  # branch it hangs from. Without it, opening equity's `unclassified` also lists
+  # fixed income's, and the level reports more money than the child above it.
+  test "an unclassified sub-class opens onto its own asset class only" do
+    account = create_investment_account(balance: 1000, cash_balance: 0)
+    # asset_class set, asset_sub_class left blank -> UNCLASSIFIED in both classes.
+    share = create_classified_security(ticker: "UEQ1", asset_class: "equity")
+    bond = create_classified_security(ticker: "UFI1", asset_class: "fixed_income")
+    Holding.create!(account: account, security: share, date: Date.current, qty: 1, price: 600, amount: 600, currency: "USD")
+    Holding.create!(account: account, security: bond, date: Date.current, qty: 1, price: 400, amount: 400, currency: "USD")
+
+    [ false, true ].each do |look_through|
+      rows = @statement.allocation_children(
+        "asset_sub_class", InvestmentStatement::UNCLASSIFIED,
+        look_through: look_through, parent: "equity"
+      )
+
+      assert_equal [ share.id ], rows.map(&:id),
+                   "look_through=#{look_through}: fixed income's unclassified position leaked into equity's"
+      assert_equal 600, rows.sum { |r| r.amount.amount }.to_i,
+                   "look_through=#{look_through}: the bottom level reported more than its parent holds"
+    end
+  end
+
+  # `build_segments` drops a non-positive ROW, which is right for a row but
+  # makes the levels disagree: a sub-class holding +1,000 and -500 nets to 500
+  # one level up, while the bottom level -- where they are two rows -- drops the
+  # negative and reports 1,000. A negative amount is corrupt data (upsert_all
+  # bypasses Holding's validations), so it is excluded before anything sums.
+  test "a corrupt negative holding is excluded at every level, not just the bottom" do
+    account = create_investment_account(balance: 1000, cash_balance: 0)
+    good = create_classified_security(ticker: "POS1", asset_class: "equity", asset_sub_class: "stock")
+    bad = create_classified_security(ticker: "NEG1", asset_class: "equity", asset_sub_class: "stock")
+    Holding.create!(account: account, security: good, date: Date.current, qty: 1, price: 1000, amount: 1000, currency: "USD")
+    corrupt = Holding.create!(account: account, security: bad, date: Date.current, qty: 1, price: 500, amount: 500, currency: "USD")
+    # Holding validates a non-negative amount, so reproduce the only way one
+    # lands in production: a write that skips validation.
+    corrupt.update_columns(amount: -500)
+
+    [ false, true ].each do |look_through|
+      parent = @statement.allocation_children("asset_class", "equity", look_through: look_through)
+      stock = parent.find { |r| r.id == "stock" }
+      bottom = @statement.allocation_children(
+        "asset_sub_class", "stock", look_through: look_through, parent: "equity"
+      )
+
+      assert_equal 1000, stock.amount.amount.to_i,
+                   "look_through=#{look_through}: the negative row netted against the good one a level up"
+      assert_equal 1000, bottom.sum { |r| r.amount.amount }.to_i,
+                   "look_through=#{look_through}: the bottom level disagreed with its parent"
+      assert_equal [ good.id ], bottom.map(&:id),
+                   "look_through=#{look_through}: the corrupt position was still listed"
+    end
+  end
+
   # The property #201's defect actually broke: a level accounts for all of the
   # level above it.
   test "looked-through children sum to their parent" do

@@ -225,10 +225,15 @@ class InvestmentStatement
   # slice ONE row set at every level rather than derive each level separately:
   # see `look_through_rows`. The parent and the child then cannot disagree,
   # because they are two groupings of the same rows.
-  def allocation_children(by, bucket, look_through: false)
+  # `parent` is the asset class the sub-class was reached through. A sub-class
+  # name is NOT unique across asset classes -- `unclassified` is reachable from
+  # every one of them -- so without it the bottom level answers "every holding
+  # in any `unclassified` bucket" and files another class's positions under
+  # this one. The level then exceeds the child it hangs from.
+  def allocation_children(by, bucket, look_through: false, parent: nil)
     case by.to_s
     when "asset_class" then allocation_sub_classes_within(bucket, look_through: look_through)
-    when "asset_sub_class" then allocation_holdings_within(:asset_sub_class, bucket, "cash", look_through: look_through)
+    when "asset_sub_class" then allocation_holdings_within(:asset_sub_class, bucket, "cash", look_through: look_through, parent: parent)
     else []
     end
   end
@@ -1090,7 +1095,7 @@ class InvestmentStatement
     # row would print the wrong listing's name for precisely the case that
     # ambiguity rule exists to handle.
     def look_through_rows
-      @look_through_rows ||= current_holdings.flat_map do |holding|
+      @look_through_rows ||= allocatable_holdings.flat_map do |holding|
         value = convert_to_family_currency(holding.amount, holding.currency)
         weights = constituent_weights_for(holding.security)
 
@@ -1334,7 +1339,7 @@ class InvestmentStatement
     # ticker collapse into one row, because the exposure is one exposure however
     # many wrappers it arrives through -- which is the most useful thing this
     # level says.
-    def allocation_holdings_within(column, bucket, cash_bucket = nil, look_through: false)
+    def allocation_holdings_within(column, bucket, cash_bucket = nil, look_through: false, parent: nil)
       if look_through
         grouped = Hash.new(0)
         # Two name sources, resolved in a fixed order rather than by whichever
@@ -1346,6 +1351,7 @@ class InvestmentStatement
         constituent_names = {}
         look_through_rows.each do |row|
           next unless row[column] == bucket
+          next if parent && row[:asset_class] != parent
 
           grouped[row[:id]] += row[:value]
           if row[:held_directly]
@@ -1359,7 +1365,7 @@ class InvestmentStatement
         )
       end
 
-      rows = holdings_classified_as(column, bucket, cash_bucket).map do |holding|
+      rows = holdings_classified_as(column, bucket, cash_bucket, parent: parent).map do |holding|
         [ holding.security_id, holding.security.name.presence || holding.security.ticker,
           convert_to_family_currency(holding.amount, holding.currency) ]
       end
@@ -1381,9 +1387,28 @@ class InvestmentStatement
       security.public_send(column).presence || UNCLASSIFIED
     end
 
-    def holdings_classified_as(column, bucket, cash_bucket = nil)
-      current_holdings.select do |holding|
-        classification_bucket(holding.security, column, cash_bucket) == bucket
+    def holdings_classified_as(column, bucket, cash_bucket = nil, parent: nil)
+      allocatable_holdings.select do |holding|
+        classification_bucket(holding.security, column, cash_bucket) == bucket &&
+          (parent.nil? || classification_bucket(holding.security, :asset_class, "liquidity") == parent)
+      end
+    end
+
+    # The allocation ladder's holdings, with the SAME per-row rule that
+    # `holdings_rolled_up_by_security` applies and for the same reason: a
+    # negative amount is corrupt data, because `Holding` validates its amount as
+    # non-negative but `Holding::Materializer` writes through `upsert_all`,
+    # which runs no validations, so an over-sell can land one.
+    #
+    # It has to be applied HERE, before anything aggregates, rather than left to
+    # `build_segments`. `build_segments` drops a non-positive row, which is the
+    # right answer for a row -- but by the time a level above has summed a
+    # +1,000 and a -500 into one bucket it has already netted them to 500, and
+    # only the bottom level, where they are two separate rows, drops the
+    # negative and reports 1,000. The levels then disagree about the same money.
+    def allocatable_holdings
+      @allocatable_holdings ||= current_holdings.select do |holding|
+        convert_to_family_currency(holding.amount, holding.currency).positive?
       end
     end
 
