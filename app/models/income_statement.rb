@@ -1,4 +1,5 @@
 require "digest/md5"
+require "digest/sha2"
 
 class IncomeStatement
   include Monetizable
@@ -268,8 +269,11 @@ class IncomeStatement
       end
     end
 
+    # Only a cache-key segment, so any stable digest would do; SHA-256 rather
+    # than MD5 because the input is account ids. A rolling deploy that mixes
+    # the two digests just keeps separate cache entries, each of them correct.
     def included_account_ids_hash
-      @included_account_ids_hash ||= included_account_ids ? Digest::MD5.hexdigest(included_account_ids.sort.join(",")) : nil
+      @included_account_ids_hash ||= included_account_ids ? Digest::SHA256.hexdigest(included_account_ids.sort.join(",")) : nil
     end
 
     # An IncomeStatement is a request-scoped reporting snapshot, like its memoized
