@@ -1885,6 +1885,51 @@ class InvestmentStatementTest < ActiveSupport::TestCase
     assert_equal 1000, rows.first.amount.amount.to_i
   end
 
+  # A fund whose constituent weights sum to zero has no usable split, so
+  # `constituent_weights_for` returns nothing and the fund falls back to ONE row
+  # for itself, from its own columns -- at the bottom level as well as above it.
+  # The rows are present, so this is not the "no constituents" path the non-fund
+  # test above already covers.
+  test "a fund whose constituent weights sum to zero is its own bottom row" do
+    account = create_investment_account(balance: 1000, cash_balance: 0)
+    create_classified_security(ticker: "ZSH1", asset_class: "equity", asset_sub_class: "stock")
+    fund = create_classified_security(ticker: "ZFND1", asset_class: "equity", asset_sub_class: "etf")
+    fund.constituents.create!(ticker: "ZSH1", name: "A share", weight: 0)
+    Holding.create!(account: account, security: fund, date: Date.current, qty: 1, price: 1000, amount: 1000, currency: "USD")
+
+    stock = @statement.allocation_children("asset_sub_class", "stock", look_through: true, parent: "equity")
+    etf = @statement.allocation_children("asset_sub_class", "etf", look_through: true, parent: "equity")
+
+    assert_empty stock, "a zero-weight constituent was given a share of the fund"
+    assert_equal [ fund.id ], etf.map(&:id), "the fund did not fall back to a row for itself"
+    assert_equal 1000, etf.first.amount.amount.to_i
+  end
+
+  # A provider's list rarely sums to exactly 100 (a "top holdings" feed can stop
+  # at 80). The weights are normalised against their actual sum -- see
+  # `Security::Constituent` -- so the listed constituents carry the whole fund
+  # between them and nothing is left over. Pinned at the bottom level because
+  # that is where the scaled values are now printed by name; presenting the
+  # unlisted remainder differently is an open product question, and this test
+  # is what would change with it.
+  test "an incomplete constituent list is scaled to the whole fund at the bottom level" do
+    account = create_investment_account(balance: 1000, cash_balance: 0)
+    first = create_classified_security(ticker: "PSH1", asset_class: "equity", asset_sub_class: "stock")
+    second = create_classified_security(ticker: "PSH2", asset_class: "equity", asset_sub_class: "stock")
+    fund = create_classified_security(ticker: "PFND1", asset_class: "equity", asset_sub_class: "etf")
+    fund.constituents.create!(ticker: "PSH1", name: "First share", weight: 50)
+    fund.constituents.create!(ticker: "PSH2", name: "Second share", weight: 30)
+    Holding.create!(account: account, security: fund, date: Date.current, qty: 1, price: 1000, amount: 1000, currency: "USD")
+
+    rows = @statement.allocation_children("asset_sub_class", "stock", look_through: true, parent: "equity")
+      .index_by(&:id)
+
+    assert_equal 625, rows[first.id].amount.amount.to_i, "50 of a listed 80 is 62.5% of the fund"
+    assert_equal 375, rows[second.id].amount.amount.to_i, "30 of a listed 80 is 37.5% of the fund"
+    assert_equal 1000, rows.values.sum { |r| r.amount.amount }.to_i,
+                 "the listed constituents did not account for the whole fund"
+  end
+
   # A sub-class NAME is not unique across asset classes -- `unclassified` is
   # reachable from every one of them -- so the bottom level has to be told which
   # branch it hangs from. Without it, opening equity's `unclassified` also lists
