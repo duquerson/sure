@@ -70,6 +70,20 @@ class RetirementPlan::MilestonesTest < ActiveSupport::TestCase
     assert_equal [ nil, false ], [ m.year, m.reached_already ]
   end
 
+  # A traditional plan can keep a retirement date that has passed. There is no
+  # saving year left to coast on, so there is no Coast FI to show, even with
+  # assets above the FI number (CodeRabbit on #255).
+  test "a retirement year already past has no Coast FI" do
+    list = milestones(retirement_year: 2025, current_assets: 400_000).all
+
+    assert_nil find(list, "coast")
+    assert_equal %w[fi_25 fi_50 fi_75 fi_100], list.map(&:key)
+  end
+
+  test "a retirement year that is this year still has Coast FI" do
+    assert find(milestones(retirement_year: 2026, current_assets: 400_000).all, "coast")
+  end
+
   test "a portfolio that could already coast is reached, with no year" do
     # 200,000 today against 300,000 / 1.05^20 = 113,066.84.
     m = find(milestones(current_assets: 200_000).all, "coast")

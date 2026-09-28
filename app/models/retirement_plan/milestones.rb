@@ -49,9 +49,9 @@ class RetirementPlan::Milestones
     end
 
     # Only the saving years count: from the retirement year there is nothing
-    # left to coast on.
+    # left to coast on. A retirement year already past leaves none at all.
     def coast
-      return nil if @retirement_year.nil?
+      return nil if @retirement_year.nil? || @retirement_year < @first_year
       return milestone("coast", nil, reached_already: true) if @current_assets >= coast_target(@first_year - 1)
 
       row = @rows.detect { |r| r.year < @retirement_year && r.end_value_real >= coast_target(r.year) }
