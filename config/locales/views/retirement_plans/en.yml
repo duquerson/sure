@@ -1,9 +1,6 @@
 ---
 en:
   retirement_plans:
-    streams:
-      seeded:
-        living_costs: Living costs
     edit:
       heading: Financial independence settings
     form:
@@ -15,6 +12,15 @@ en:
       savings_rate_hint: Leave blank to use what you actually save, from your median monthly income and spending.
       retirement_date: Retirement date
       save: Save
+      planner_heading: Year-by-year planner
+      mode: Plan to
+      modes:
+        traditional: Retire on my retirement date
+        fire: Retire as early as the money allows
+      birth_year: Year of birth
+      end_age: Plan to age
+      inflation_rate: Inflation (%)
+      returns_hint: The expected return is your yearly compound return before inflation. Figures are before tax.
     update:
       success: Financial independence settings saved
     summary:
@@ -34,6 +40,75 @@ en:
         one: 1 account is not counted because it has no exchange rate for today.
         other: "%{count} accounts are not counted because they have no exchange rate for today."
       edit: Settings
+      planner: Year-by-year planner
       chart:
         projected: Projected portfolio
         fi_number: Financial independence number
+    show:
+      title: Retirement planner
+      subtitle: Your portfolio year by year, to the age you plan to.
+      settings: Settings
+      streams: Spending and income
+      add_stream: Add
+      no_streams: Nothing added yet. Your living costs and loan repayments are added the first time you save your settings.
+      stream_kinds:
+        expense: Spending
+        income: Income
+        one_off: One-off
+      stream_years: "%{from} to %{to}"
+      now: now
+      end_age: end of plan
+      fixed: fixed amount
+      edit: Edit
+      delete: Delete
+      confirm_delete: Delete %{name}?
+    planner:
+      settings: Settings
+      needs:
+        birth_year: Add your year of birth in settings to see your plan year by year.
+        retirement_date: Add a retirement date in settings, or switch to retiring as early as the money allows.
+      outcome:
+        fire: "On expected returns, you could retire in %{year}, at %{age}, and the money lasts to the end of the plan."
+        fire_unreachable: "On expected returns, no retirement year lasts to %{end_age}. Retiring at the last possible year, the money runs out at %{age}."
+        lasts: "On expected returns, the money lasts to %{end_age}."
+        runs_out: "On expected returns, the money runs out at %{age}."
+      assumptions: Expected returns, not a forecast. Before tax. Growth is a single yearly rate across all your funding accounts.
+      columns:
+        year: Year
+        age: Age
+        contribution: Paid in
+        withdrawal: Taken out
+        growth: Growth
+        end_value: End of year
+        end_value_real: In today's money
+      chart:
+        nominal: Portfolio
+        real: In today's money
+    streams:
+      seeded:
+        living_costs: Living costs
+      form:
+        kind: Type
+        kinds:
+          expense: Spending
+          income: Income, such as a pension
+          one_off: One-off amount
+        name: Name
+        annual_amount: Amount a year
+        start_year: From year
+        start_year_placeholder: Now
+        end_year: To year
+        end_year_placeholder: End of plan
+        indexed: Rises with inflation
+        indexed_hint: Turn off for fixed amounts, such as a loan repayment.
+        save: Save
+      new:
+        heading: Add spending or income
+      edit:
+        heading: Edit spending or income
+      create:
+        success: Added
+      update:
+        success: Saved
+      destroy:
+        success: Deleted
