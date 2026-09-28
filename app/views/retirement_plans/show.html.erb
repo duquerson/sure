@@ -18,6 +18,14 @@
     ) %>
   <% end %>
 
+  <% if @monte_carlo_available %>
+    <%= turbo_stream_from Current.user, :retirement_plan %>
+    <%= render DS::Card.new do %>
+      <h2 class="text-sm font-medium text-primary mb-3"><%= t(".monte_carlo") %></h2>
+      <%= render "retirement_plans/monte_carlo", plan: @retirement_plan, result: @monte_carlo %>
+    <% end %>
+  <% end %>
+
   <%= render DS::Card.new do %>
     <div class="flex items-center justify-between gap-2 mb-3">
       <h2 class="text-sm font-medium text-primary"><%= t(".streams") %></h2>
