@@ -20,7 +20,7 @@ class Portfolio::SectionRegistry
   # The built-in section keys, in declaration order. The preferences
   # endpoint accepts only these, so a saved order or collapsed set cannot
   # carry arbitrary strings into the user's preferences.
-  KEYS = %w[kpis performance index_chart comparison drivers value_chart realized_gains holdings accounts allocation data_quality].freeze
+  KEYS = %w[kpis performance index_chart comparison drivers value_chart realized_gains holdings accounts allocation data_quality retirement].freeze
 
   attr_reader :statement, :period, :as_of, :user, :sort, :dir, :by, :look_through, :extra_sections
 
@@ -189,8 +189,29 @@ class Portfolio::SectionRegistry
           locals: shared_locals.merge(issues: data_quality_issues, writable_account_ids: writable_account_ids),
           visible: data_quality_issues.any?,
           collapsible: true
+        },
+        # The FIRE card (#127, 8.1), for the viewer's own plan. Its figures are
+        # built from the accounts this user counts in their finances -- the
+        # same scope the statement uses -- at the registry's one `as_of`.
+        # Hidden without a user, since a plan belongs to one.
+        {
+          key: "retirement",
+          title: "portfolios.sections.retirement",
+          partial: "portfolios/retirement",
+          locals: shared_locals.merge(retirement: retirement),
+          visible: user.present?,
+          collapsible: true
         }
       ]
+    end
+
+    def retirement
+      return nil if user.nil?
+
+      @retirement ||= begin
+        plan = RetirementPlan.for(user)
+        { projection: plan.projection(as_of: as_of), unconverted_count: plan.unconverted_account_count(as_of: as_of) }
+      end
     end
 
     # The six KPI figures, read from the statement here so the partial only

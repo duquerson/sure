@@ -1,0 +1,26 @@
+<%# locals: (retirement_plan:) %>
+
+<%= styled_form_with model: retirement_plan, url: retirement_plan_path, method: :patch, class: "space-y-4" do |f| %>
+  <% if retirement_plan.errors.any? %>
+    <%= render "shared/form_errors", model: retirement_plan %>
+  <% end %>
+
+  <%= f.number_field :safe_withdrawal_rate_percent,
+                     label: t(".safe_withdrawal_rate"),
+                     step: "0.01", min: "0.01", max: "100", required: true %>
+  <p class="text-xs text-secondary -mt-2"><%= t(".safe_withdrawal_rate_hint") %></p>
+
+  <%= f.number_field :expected_annual_return_percent,
+                     label: t(".expected_annual_return"),
+                     step: "0.01", min: "-99.99", max: "100", required: true %>
+
+  <%= f.number_field :savings_rate_percent,
+                     label: t(".savings_rate"),
+                     step: "0.1", min: "0", max: "100",
+                     placeholder: t(".savings_rate_placeholder") %>
+  <p class="text-xs text-secondary -mt-2"><%= t(".savings_rate_hint") %></p>
+
+  <%= f.date_field :retirement_date, label: t(".retirement_date") %>
+
+  <%= f.submit t(".save") %>
+<% end %>

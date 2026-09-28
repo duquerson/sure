@@ -451,6 +451,10 @@ Rails.application.routes.draw do
   # Hub page fronting budgets + goals under a single "Plan" nav entry.
   resource :plan, only: :show
 
+  # The signed-in user's FIRE settings (#127). Singular: a user edits only
+  # their own plan, so no id ever reaches the route.
+  resource :retirement_plan, only: %i[edit update]
+
   # Family-wide investment hub, built on the Reports section framework.
   resource :portfolio, only: :show do
     patch :update_preferences
