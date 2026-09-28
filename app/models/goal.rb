@@ -780,7 +780,7 @@ class Goal < ApplicationRecord
 
     earliest = series_values.first&.date || created_at.to_date
     target_amt = target_amount.to_d
-    proj_end = projection_end_amount
+    proj_end = projection_end_amount(as_of: today)
 
     {
       saved_series: saved_series,
@@ -835,10 +835,11 @@ class Goal < ApplicationRecord
 
   # Projected balance at the target_date given the current pace. Mirrors
   # the JS calculation so the server can pre-format the chart annotation
-  # without re-rendering after each Stimulus draw.
-  def projection_end_amount
+  # without re-rendering after each Stimulus draw. Measured from the
+  # payload's own `today`, so the end value and the line agree on the day.
+  def projection_end_amount(as_of: Date.current)
     return current_balance.to_d if target_date.nil?
-    months = ((target_date - Date.current).to_f / 30.44).clamp(0.0, Float::INFINITY)
+    months = ((target_date - as_of).to_f / 30.44).clamp(0.0, Float::INFINITY)
     projected = current_balance.to_d + (pace.to_d * months)
     [ current_balance.to_d, projected ].max
   end

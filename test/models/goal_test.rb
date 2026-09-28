@@ -1355,6 +1355,28 @@ class GoalTest < ActiveSupport::TestCase
     assert_equal goal.milestones(as_of: today).map { |m| m[:date] }, payload[:milestones].map { |m| m[:date] }
   end
 
+  # Production Readiness Review on #256: the projection's end value read the
+  # clock for itself, so on a clock that moves it was measured from a later
+  # day than the payload's `today`.
+  test "the projection end value is measured from the payload's own today" do
+    goal = milestone_goal
+    base = Date.new(2026, 3, 15)
+    goal.stubs(:target_date).returns(base + 3044)
+    Date.stubs(:current).returns(*(0..200).map { |i| base + i * 30 })
+
+    payload = goal.projection_payload
+    months = (goal.target_date - Date.parse(payload[:today])).to_f / 30.44
+
+    # 400 saved plus 50 a month for the months from `today` to the target date.
+    assert_in_delta 400 + 50 * months, payload[:projection_end_value], 0.001
+  end
+
+  test "a negative pace dates no milestone ahead" do
+    list = milestone_goal(pace: -50).milestones(as_of: Date.new(2026, 3, 15))
+
+    assert_equal [ nil, nil ], list.drop(1).map { |m| m[:date] }
+  end
+
   private
 
     # 5,000 saved, 2,000 of it since spent on the thing itself.
