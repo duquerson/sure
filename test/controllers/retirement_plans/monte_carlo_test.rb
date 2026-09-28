@@ -36,6 +36,7 @@ class RetirementPlans::MonteCarloTest < ActionDispatch::IntegrationTest
 
     assert_select "#retirement-plan-monte-carlo [data-success-rate='0.93']"
     assert_select "#retirement-plan-heatmap tbody tr", count: 5
+    assert_select "#retirement-plan-monte-carlo [data-fan-line]", count: RetirementPlan::MonteCarlo::PERCENTILES.size
     assert_select "[data-monte-carlo-pending]", count: 0
   end
 
