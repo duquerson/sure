@@ -42,8 +42,12 @@ class RetirementPlans::MonteCarloComponent < ViewComponent::Base
     end
   end
 
+  # Savings steps that clamp to the same rate (a plan saving 5 points or less
+  # has two at 0%) ran the same inputs on the same draws, so their cells are
+  # identical: each rate is shown once.
   def heatmap_rows
-    result[:heatmap]
+    columns = result[:heatmap].first.each_index.uniq { |i| savings_rate_for(result[:heatmap].first[i][:savings_step]) }
+    result[:heatmap].map { |row| row.values_at(*columns) }
   end
 
   def return_label(step)
@@ -51,7 +55,11 @@ class RetirementPlans::MonteCarloComponent < ViewComponent::Base
   end
 
   def savings_label(step)
-    helpers.number_to_percentage((result[:savings_rate].to_f + step).clamp(0, 1) * 100, precision: 0)
+    helpers.number_to_percentage(savings_rate_for(step) * 100, precision: 0)
+  end
+
+  def savings_rate_for(step)
+    (result[:savings_rate].to_f + step).clamp(0, 1)
   end
 
   def cell_class(rate)

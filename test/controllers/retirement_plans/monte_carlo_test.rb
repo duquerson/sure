@@ -15,7 +15,7 @@ class RetirementPlans::MonteCarloTest < ActionDispatch::IntegrationTest
                                    success_target: BigDecimal("0.9"))
   end
 
-  def cached_result(success_rate: 0.93, confident_year: 2041)
+  def cached_result(success_rate: 0.93, confident_year: 2041, savings_rate: BigDecimal("0.2"))
     as_of = Date.current
     grid = RetirementPlan::MonteCarlo::RETURN_STEPS.map do |r|
       RetirementPlan::MonteCarlo::SAVINGS_STEPS.map { |s| { return_step: r, savings_step: s, success_rate: 0.5 } }
@@ -23,7 +23,7 @@ class RetirementPlans::MonteCarloTest < ActionDispatch::IntegrationTest
     {
       as_of: as_of, retirement_year: 2045, success_rate: success_rate, stress_success_rate: 0.71,
       confident_year: confident_year, percentiles: RetirementPlan::MonteCarlo::PERCENTILES.index_with { [ 1.0, 2.0 ] },
-      heatmap: grid, expected_annual_return: BigDecimal("0.05"), savings_rate: BigDecimal("0.2")
+      heatmap: grid, expected_annual_return: BigDecimal("0.05"), savings_rate: savings_rate
     }
   end
 
@@ -62,6 +62,25 @@ class RetirementPlans::MonteCarloTest < ActionDispatch::IntegrationTest
     # The layout subscribes to other streams, so assert this one by name.
     signed = Turbo::StreamsChannel.signed_stream_name([ @user, :retirement_plan ])
     assert_select "turbo-cable-stream-source[signed-stream-name='#{signed}']"
+  end
+
+  # Light Gatekeeper review of #252: saving 3%, the two lower savings steps
+  # both clamp to 0%, so the axis read "0%" twice over two identical columns.
+  test "savings steps that clamp to the same rate show as one heatmap column" do
+    Rails.cache.write(@plan.monte_carlo_cache_key(as_of: Date.current), cached_result(savings_rate: BigDecimal("0.03")))
+    get retirement_plan_url
+
+    labels = css_select("#retirement-plan-heatmap thead th").drop(1).map { |th| th.text.strip }
+    assert_equal [ "0%", "3%", "8%", "13%" ], labels
+    assert_select "#retirement-plan-heatmap tbody tr:first-child td", count: 4
+  end
+
+  test "a savings rate clear of zero keeps all five heatmap columns" do
+    Rails.cache.write(@plan.monte_carlo_cache_key(as_of: Date.current), cached_result)
+    get retirement_plan_url
+
+    labels = css_select("#retirement-plan-heatmap thead th").drop(1).map { |th| th.text.strip }
+    assert_equal [ "10%", "15%", "20%", "25%", "30%" ], labels
   end
 
   test "the run is enqueued for today's date and this plan" do
