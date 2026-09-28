@@ -5,6 +5,8 @@
 # project a different set of accounts for each member who opened it.
 class RetirementPlan < ApplicationRecord
   belongs_to :user
+  has_many :streams, class_name: "RetirementPlan::Stream", dependent: :destroy
+  has_many :funding_links, class_name: "RetirementPlan::FundingAccount", dependent: :destroy
 
   validates :safe_withdrawal_rate, presence: true,
                                    numericality: { greater_than: 0, less_than_or_equal_to: 1 }
@@ -16,13 +18,21 @@ class RetirementPlan < ApplicationRecord
                            allow_nil: true
   validate :percent_inputs_are_numbers
 
+  # The full planner tier (8.2). Mirrors the database checks.
+  MODES = %w[traditional fire].freeze
+  validates :end_age, numericality: { only_integer: true, greater_than_or_equal_to: 50, less_than_or_equal_to: 120 }
+  validates :birth_year, numericality: { only_integer: true, greater_than_or_equal_to: 1900, less_than_or_equal_to: 2100 },
+                         allow_nil: true
+  validates :inflation_rate, presence: true, numericality: { greater_than: -1, less_than_or_equal_to: 1 }
+  validates :mode, inclusion: { in: MODES }
+
   # The user's saved plan, or an unsaved one carrying the column defaults.
   # Never writes: opening a page must not create a row.
   def self.for(user)
     find_by(user: user) || new(user: user)
   end
 
-  PERCENT_ATTRIBUTES = %i[safe_withdrawal_rate expected_annual_return savings_rate].freeze
+  PERCENT_ATTRIBUTES = %i[safe_withdrawal_rate expected_annual_return savings_rate inflation_rate].freeze
 
   # The form speaks in percent; the columns hold fractions. Blank stays blank,
   # which for the savings rate means "derive it". Input that is not a number
