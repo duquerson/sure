@@ -43,8 +43,13 @@ class RetirementPlansController < ApplicationController
       @monte_carlo_available = @retirement_plan.persisted? && (@simulation.present? || @solution.present?)
       return unless @monte_carlo_available
 
-      @monte_carlo = Rails.cache.read(@retirement_plan.monte_carlo_cache_key(as_of: @as_of))
-      @retirement_plan.enqueue_monte_carlo(as_of: @as_of) if @monte_carlo.nil?
+      @monte_carlo_key = @retirement_plan.monte_carlo_cache_key(as_of: @as_of)
+      @monte_carlo = Rails.cache.read(@monte_carlo_key)
+      return if @monte_carlo
+
+      # A run that raised is not asked for again; changed inputs are a new key.
+      @monte_carlo_failed = Rails.cache.exist?(RetirementPlan.monte_carlo_marker(@monte_carlo_key, :failed))
+      @retirement_plan.enqueue_monte_carlo(as_of: @as_of, key: @monte_carlo_key) unless @monte_carlo_failed
     end
 
     def retirement_plan_params

@@ -25,8 +25,8 @@
       <%# The run can finish before the stream above subscribes, and a missed
           broadcast is not replayed, so while pending the section also polls. %>
       <%= turbo_frame_tag "retirement-plan-monte-carlo-frame",
-            data: @monte_carlo.nil? ? { controller: "polling", polling_url_value: retirement_plan_path, polling_interval_value: 5000 } : {} do %>
-        <%= render "retirement_plans/monte_carlo", plan: @retirement_plan, result: @monte_carlo %>
+            data: @monte_carlo.nil? && !@monte_carlo_failed ? { controller: "polling", polling_url_value: retirement_plan_path, polling_interval_value: 5000 } : {} do %>
+        <%= render "retirement_plans/monte_carlo", plan: @retirement_plan, result: @monte_carlo, key: @monte_carlo_key, failed: @monte_carlo_failed %>
       <% end %>
     <% end %>
   <% end %>

@@ -1,5 +1,7 @@
-<div id="retirement-plan-monte-carlo" class="space-y-4">
-  <% if pending? %>
+<div id="retirement-plan-monte-carlo" class="space-y-4" data-monte-carlo-key="<%= digest %>">
+  <% if failed? %>
+    <p class="text-sm text-warning" data-monte-carlo-failed><%= t("retirement_plans.monte_carlo.failed") %></p>
+  <% elsif pending? %>
     <p class="text-sm text-secondary" data-monte-carlo-pending><%= t("retirement_plans.monte_carlo.pending") %></p>
   <% else %>
     <div class="grid grid-cols-1 @xl:grid-cols-3 gap-3">

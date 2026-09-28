@@ -118,6 +118,7 @@ en:
         success: Deleted
     monte_carlo:
       pending: Running 5,000 simulations of your plan. This takes a few seconds.
+      failed: The simulations could not be run for this plan. Changing a setting runs them again.
       success_rate: Chance the money lasts
       success_rate_hint: "Share of %{paths} simulated markets in which the money lasts to the end of the plan, retiring in %{year}."
       stress: If the worst years come first

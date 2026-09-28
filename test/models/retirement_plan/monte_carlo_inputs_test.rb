@@ -60,7 +60,10 @@ class RetirementPlan::MonteCarloInputsTest < ActiveJob::TestCase
   test "the job writes the result under the key and broadcasts it to the plan's owner" do
     Rails.stubs(:cache).returns(ActiveSupport::Cache::MemoryStore.new)
     key = @plan.monte_carlo_cache_key(as_of: AS_OF)
-    Turbo::StreamsChannel.expects(:broadcast_replace_to).with([ @member, :retirement_plan ], has_entry(target: "retirement-plan-monte-carlo")).once
+    # Only the section showing these inputs is replaced (CodeRabbit on #252):
+    # an older run finishing late cannot overwrite a newer page's result.
+    own_section = "#retirement-plan-monte-carlo[data-monte-carlo-key='#{key.split("/").last}']"
+    Turbo::StreamsChannel.expects(:broadcast_replace_to).with([ @member, :retirement_plan ], has_entry(targets: own_section)).once
 
     RetirementPlan::MonteCarloJob.perform_now(@plan.id, AS_OF.iso8601)
     result = Rails.cache.read(key)
@@ -114,16 +117,17 @@ class RetirementPlan::MonteCarloInputsTest < ActiveJob::TestCase
     assert_not Rails.cache.exist?(marker)
   end
 
-  # Production Readiness Review of #252: a run that raises is recorded for
-  # support and dropped rather than retried, since the same inputs fail the
-  # same way. Its marker is left to expire, so an open page polling for the
-  # result re-enqueues at most once per expiry rather than on every poll.
-  test "a run that raises is recorded and discarded, and its marker is kept" do
+  # Production Readiness Review and CodeRabbit on #252: a run that raises is
+  # recorded for support and dropped rather than retried, since the same
+  # inputs fail the same way, and its inputs are marked failed so the page
+  # stops asking for them.
+  test "a run that raises is recorded, discarded and marked failed" do
     Rails.stubs(:cache).returns(ActiveSupport::Cache::MemoryStore.new)
     Turbo::StreamsChannel.expects(:broadcast_replace_to).never
     RetirementPlan.any_instance.stubs(:monte_carlo_result).raises(ZeroDivisionError, "divided by 0")
-    marker = "#{@plan.monte_carlo_cache_key(as_of: AS_OF)}/pending"
+    key = @plan.monte_carlo_cache_key(as_of: AS_OF)
     @plan.enqueue_monte_carlo(as_of: AS_OF)
+    assert_not Rails.cache.exist?("#{key}/failed")
 
     assert_difference -> { DebugLogEntry.where(source: "RetirementPlan::MonteCarloJob", level: "error").count }, 1 do
       assert_nothing_raised { RetirementPlan::MonteCarloJob.perform_now(@plan.id, AS_OF.iso8601) }
@@ -132,7 +136,60 @@ class RetirementPlan::MonteCarloInputsTest < ActiveJob::TestCase
     entry = DebugLogEntry.where(source: "RetirementPlan::MonteCarloJob").last
     assert_equal @family, entry.family
     assert_equal({ "retirement_plan_id" => @plan.id, "as_of" => AS_OF.iso8601, "error_class" => "ZeroDivisionError" }, entry.metadata)
-    assert Rails.cache.exist?(marker)
+    assert Rails.cache.exist?("#{key}/failed")
+    assert_not Rails.cache.exist?("#{key}/pending")
+  end
+
+  # CodeRabbit on #252: a plan saved while its run is in flight has new inputs
+  # and a new key. The run's markers stay with the inputs it was started for.
+  test "a run marks the inputs it started with, even if the plan changes while it runs" do
+    Rails.stubs(:cache).returns(ActiveSupport::Cache::MemoryStore.new)
+    Turbo::StreamsChannel.stubs(:broadcast_replace_to)
+    started = @plan.monte_carlo_cache_key(as_of: AS_OF)
+    @plan.enqueue_monte_carlo(as_of: AS_OF)
+    RetirementPlan.any_instance.stubs(:monte_carlo_result).with do
+      RetirementPlan.where(id: @plan.id).update_all(return_volatility: BigDecimal("0.3"))
+      true
+    end.raises(ZeroDivisionError, "divided by 0")
+
+    RetirementPlan::MonteCarloJob.perform_now(@plan.id, AS_OF.iso8601)
+    changed = RetirementPlan.find(@plan.id).monte_carlo_cache_key(as_of: AS_OF)
+
+    assert_not_equal started, changed, "precondition: the edit changed the key"
+    assert Rails.cache.exist?("#{started}/failed")
+    assert_not Rails.cache.exist?("#{started}/pending")
+    assert_not Rails.cache.exist?("#{changed}/failed")
+  end
+
+  test "a finished run clears the marker it started with, even if the plan changes while it runs" do
+    Rails.stubs(:cache).returns(ActiveSupport::Cache::MemoryStore.new)
+    Turbo::StreamsChannel.stubs(:broadcast_replace_to)
+    started = @plan.monte_carlo_cache_key(as_of: AS_OF)
+    @plan.enqueue_monte_carlo(as_of: AS_OF)
+    RetirementPlan.any_instance.stubs(:monte_carlo_result).with do
+      RetirementPlan.where(id: @plan.id).update_all(return_volatility: BigDecimal("0.3"))
+      true
+    end.returns({ success_rate: 0.5 })
+
+    RetirementPlan::MonteCarloJob.perform_now(@plan.id, AS_OF.iso8601)
+
+    assert_not Rails.cache.exist?("#{started}/pending")
+    assert_equal({ success_rate: 0.5 }, Rails.cache.read(started))
+  end
+
+  # CodeRabbit on #252: a marker left behind by a job that never queued would
+  # hold the page on "calculating" with nothing running.
+  test "a run that fails to enqueue leaves no pending marker" do
+    Rails.stubs(:cache).returns(ActiveSupport::Cache::MemoryStore.new)
+    marker = @plan.monte_carlo_pending_key(as_of: AS_OF)
+
+    RetirementPlan::MonteCarloJob.stubs(:perform_later).raises(RedisClient::CannotConnectError, "down")
+    assert_raises(RedisClient::CannotConnectError) { @plan.enqueue_monte_carlo(as_of: AS_OF) }
+    assert_not Rails.cache.exist?(marker)
+
+    RetirementPlan::MonteCarloJob.stubs(:perform_later).returns(RetirementPlan::MonteCarloJob.new.tap { |job| job.successfully_enqueued = false })
+    assert_equal false, @plan.enqueue_monte_carlo(as_of: AS_OF)
+    assert_not Rails.cache.exist?(marker)
   end
 
   # Production Readiness Review of #252: each run is thousands of simulated

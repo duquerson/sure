@@ -7,13 +7,25 @@
 class RetirementPlans::MonteCarloComponent < ViewComponent::Base
   attr_reader :plan, :result
 
-  def initialize(plan:, result:)
+  # `key` is the result's cache key: the section carries its digest, so a run
+  # replaces only the section showing its own inputs.
+  def initialize(plan:, result:, key:, failed: false)
     @plan = plan
     @result = result
+    @key = key
+    @failed = failed
+  end
+
+  def digest
+    RetirementPlan.monte_carlo_digest(@key)
+  end
+
+  def failed?
+    result.nil? && @failed
   end
 
   def pending?
-    result.nil?
+    result.nil? && !@failed
   end
 
   def fire?

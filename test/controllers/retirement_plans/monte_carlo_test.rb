@@ -83,6 +83,32 @@ class RetirementPlans::MonteCarloTest < ActionDispatch::IntegrationTest
     assert_equal [ "10%", "15%", "20%", "25%", "30%" ], labels
   end
 
+  # CodeRabbit on #252: a run that raised is not retried from the page, which
+  # says so and stops polling. A change to the plan is a new key, and runs.
+  test "after a failed run the section says so, and neither polls nor enqueues" do
+    key = @plan.monte_carlo_cache_key(as_of: Date.current)
+    Rails.cache.write("#{key}/failed", true)
+
+    assert_no_enqueued_jobs only: RetirementPlan::MonteCarloJob do
+      get retirement_plan_url
+    end
+
+    assert_select "#retirement-plan-monte-carlo [data-monte-carlo-failed]"
+    assert_select "[data-monte-carlo-pending]", count: 0
+    assert_select "[data-polling-url-value]", count: 0
+  end
+
+  # The job's broadcast replaces only the section showing its own inputs.
+  test "the section carries the key of the inputs it shows" do
+    digest = @plan.monte_carlo_cache_key(as_of: Date.current).split("/").last
+    get retirement_plan_url
+    assert_select "#retirement-plan-monte-carlo[data-monte-carlo-key='#{digest}'] [data-monte-carlo-pending]"
+
+    Rails.cache.write(@plan.monte_carlo_cache_key(as_of: Date.current), cached_result)
+    get retirement_plan_url
+    assert_select "#retirement-plan-monte-carlo[data-monte-carlo-key='#{digest}'] [data-success-rate]"
+  end
+
   test "the run is enqueued for today's date and this plan" do
     get retirement_plan_url
 

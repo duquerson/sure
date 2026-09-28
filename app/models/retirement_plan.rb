@@ -170,17 +170,40 @@ class RetirementPlan < ApplicationRecord
     }
   end
 
-  # Enqueues the run unless one for the same inputs is already queued.
-  def enqueue_monte_carlo(as_of:)
-    return false unless Rails.cache.write(monte_carlo_pending_key(as_of: as_of), true, unless_exist: true, expires_in: 10.minutes)
+  # Enqueues the run unless one for the same inputs is already queued. A run
+  # that did not queue takes its marker back, so the page is not left saying
+  # "calculating" with nothing running.
+  def enqueue_monte_carlo(as_of:, key: monte_carlo_cache_key(as_of: as_of))
+    pending = self.class.monte_carlo_marker(key, :pending)
+    return false unless Rails.cache.write(pending, true, unless_exist: true, expires_in: 10.minutes)
 
-    RetirementPlan::MonteCarloJob.perform_later(id, as_of.iso8601)
-    true
+    begin
+      queued = RetirementPlan::MonteCarloJob.perform_later(id, as_of.iso8601)
+    rescue StandardError
+      Rails.cache.delete(pending)
+      raise
+    end
+    return true if queued&.successfully_enqueued?
+
+    Rails.cache.delete(pending)
+    false
   end
 
   # Set while a run for these inputs is queued or running.
   def monte_carlo_pending_key(as_of:)
-    "#{monte_carlo_cache_key(as_of: as_of)}/pending"
+    self.class.monte_carlo_marker(monte_carlo_cache_key(as_of: as_of), :pending)
+  end
+
+  # Beside a result's key: `pending` while its run is queued or running,
+  # `failed` once the run has raised.
+  def self.monte_carlo_marker(key, name)
+    "#{key}/#{name}"
+  end
+
+  # The digest part of a result's key, which names the page section showing
+  # those inputs.
+  def self.monte_carlo_digest(key)
+    key.delete_prefix("retirement_plan/monte_carlo/")
   end
 
   # The accounts a user may fund the plan from: those they count in their own
