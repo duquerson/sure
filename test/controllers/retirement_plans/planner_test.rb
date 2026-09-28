@@ -41,6 +41,9 @@ class RetirementPlans::PlannerTest < ActionDispatch::IntegrationTest
     assert_select "#retirement-planner-table tbody tr", count: 2070 - Date.current.year + 1
     assert_select "#retirement-planner-table tbody tr[data-year='2045'][data-retired]"
     assert_select "[data-planner-outcome]"
+    # The multi-line chart draws no tooltip, so the legend is what tells the
+    # nominal line from the one in today's money.
+    assert_select "[data-planner-chart-line]", count: 2
   end
 
   test "a FIRE plan shows the earliest year on expected returns" do

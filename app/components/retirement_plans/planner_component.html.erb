@@ -30,8 +30,20 @@
     <p class="text-xs text-subdued"><%= t("retirement_plans.planner.assumptions") %></p>
 
     <% if rows.any? %>
-      <div class="w-full h-64 privacy-sensitive"
+      <%# The multi-line chart has no tooltip, so the legend names the lines,
+          as on the portfolio comparison. The dot carries text-primary because
+          the first series is drawn in currentColor. %>
+      <div class="flex flex-wrap items-center gap-x-4 gap-y-1">
+        <% chart_series.each_with_index do |line, index| %>
+          <span class="flex items-center gap-1.5 text-xs text-secondary" data-planner-chart-line="<%= index %>">
+            <span class="w-2 h-2 rounded-full text-primary" style="background-color: <%= helpers.portfolio_comparison_color(index) %>"></span>
+            <%= line[:label] %>
+          </span>
+        <% end %>
+      </div>
+      <div class="w-full h-64 privacy-sensitive text-primary"
            data-controller="time-series-chart"
+           data-time-series-chart-use-tooltip-value="false"
            data-time-series-chart-series-value="<%= chart_series.to_json %>"></div>
 
       <div class="overflow-x-auto">
