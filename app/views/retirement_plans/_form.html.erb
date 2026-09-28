@@ -22,5 +22,13 @@
 
   <%= f.date_field :retirement_date, label: t(".retirement_date") %>
 
+  <h3 class="text-sm font-medium text-primary pt-2"><%= t(".planner_heading") %></h3>
+
+  <%= f.select :mode, RetirementPlan::MODES.map { |mode| [ t(".modes.#{mode}"), mode ] }, label: t(".mode") %>
+  <%= f.number_field :birth_year, label: t(".birth_year"), step: "1", min: "1900", max: "2100" %>
+  <%= f.number_field :end_age, label: t(".end_age"), step: "1", min: "50", max: "120", required: true %>
+  <%= f.number_field :inflation_rate_percent, label: t(".inflation_rate"), step: "0.01", min: "-99.99", max: "100", required: true %>
+  <p class="text-xs text-secondary -mt-2"><%= t(".returns_hint") %></p>
+
   <%= f.submit t(".save") %>
 <% end %>

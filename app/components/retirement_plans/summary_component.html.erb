@@ -63,8 +63,10 @@
     <p class="text-xs text-warning"><%= t("retirement_plans.summary.unconverted", count: unconverted_count) %></p>
   <% end %>
 
-  <div>
+  <div class="flex flex-wrap gap-2">
     <%= render DS::Link.new(text: t("retirement_plans.summary.edit"), variant: "secondary", size: "sm",
                             icon: "settings-2", href: helpers.edit_retirement_plan_path, frame: :modal) %>
+    <%= render DS::Link.new(text: t("retirement_plans.summary.planner"), variant: "secondary", size: "sm",
+                            icon: "table-2", href: helpers.retirement_plan_path) %>
   </div>
 </div>
