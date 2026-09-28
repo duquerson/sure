@@ -86,4 +86,58 @@ class RetirementPlan::MonteCarloInputsTest < ActiveJob::TestCase
       2.times { @plan.enqueue_monte_carlo(as_of: AS_OF) }
     end
   end
+
+  # CodeRabbit on #252: the confident year is a search over retirement years,
+  # each a full run of every path, and only FIRE mode shows it.
+  test "outside FIRE mode the result has no confident year and the search never runs" do
+    RetirementPlan::MonteCarlo.any_instance.expects(:confident_year).never
+
+    assert_nil @plan.monte_carlo_result(as_of: AS_OF)[:confident_year]
+  end
+
+  test "in FIRE mode the result carries the confident year for the plan's target" do
+    @plan.update!(mode: "fire", success_target: BigDecimal("0.85"))
+    RetirementPlan::MonteCarlo.any_instance.expects(:confident_year).with(BigDecimal("0.85")).returns(2039).once
+
+    assert_equal 2039, @plan.monte_carlo_result(as_of: AS_OF)[:confident_year]
+  end
+
+  test "a finished run clears its pending marker" do
+    Rails.stubs(:cache).returns(ActiveSupport::Cache::MemoryStore.new)
+    Turbo::StreamsChannel.stubs(:broadcast_replace_to)
+    marker = "#{@plan.monte_carlo_cache_key(as_of: AS_OF)}/pending"
+    @plan.enqueue_monte_carlo(as_of: AS_OF)
+    assert Rails.cache.exist?(marker)
+
+    RetirementPlan::MonteCarloJob.perform_now(@plan.id, AS_OF.iso8601)
+
+    assert_not Rails.cache.exist?(marker)
+  end
+
+  # Production Readiness Review of #252: a run that raises is recorded for
+  # support and dropped rather than retried, since the same inputs fail the
+  # same way. Its marker is left to expire, so an open page polling for the
+  # result re-enqueues at most once per expiry rather than on every poll.
+  test "a run that raises is recorded and discarded, and its marker is kept" do
+    Rails.stubs(:cache).returns(ActiveSupport::Cache::MemoryStore.new)
+    Turbo::StreamsChannel.expects(:broadcast_replace_to).never
+    RetirementPlan.any_instance.stubs(:monte_carlo_result).raises(ZeroDivisionError, "divided by 0")
+    marker = "#{@plan.monte_carlo_cache_key(as_of: AS_OF)}/pending"
+    @plan.enqueue_monte_carlo(as_of: AS_OF)
+
+    assert_difference -> { DebugLogEntry.where(source: "RetirementPlan::MonteCarloJob", level: "error").count }, 1 do
+      assert_nothing_raised { RetirementPlan::MonteCarloJob.perform_now(@plan.id, AS_OF.iso8601) }
+    end
+
+    entry = DebugLogEntry.where(source: "RetirementPlan::MonteCarloJob").last
+    assert_equal @family, entry.family
+    assert_equal({ "retirement_plan_id" => @plan.id, "as_of" => AS_OF.iso8601, "error_class" => "ZeroDivisionError" }, entry.metadata)
+    assert Rails.cache.exist?(marker)
+  end
+
+  # Production Readiness Review of #252: each run is thousands of simulated
+  # paths, so it yields to syncs and user-facing jobs.
+  test "the job runs on the low-priority queue" do
+    assert_equal "low_priority", RetirementPlan::MonteCarloJob.new.queue_name
+  end
 end

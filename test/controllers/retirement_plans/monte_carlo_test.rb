@@ -38,6 +38,19 @@ class RetirementPlans::MonteCarloTest < ActionDispatch::IntegrationTest
     assert_select "#retirement-plan-heatmap tbody tr", count: 5
     assert_select "#retirement-plan-monte-carlo [data-fan-line]", count: RetirementPlan::MonteCarlo::PERCENTILES.size
     assert_select "[data-monte-carlo-pending]", count: 0
+    assert_select "turbo-frame#retirement-plan-monte-carlo-frame"
+    assert_select "[data-polling-url-value]", count: 0
+  end
+
+  # CodeRabbit on #252: the run can finish before the page subscribes, and a
+  # missed broadcast is not replayed. While pending, the section re-reads the
+  # page until the cached result is there; the page that has it stops polling.
+  test "while pending the section polls the page for the result" do
+    get retirement_plan_url
+
+    assert_select "turbo-frame#retirement-plan-monte-carlo-frame[data-controller='polling'][data-polling-url-value='#{retirement_plan_path}']" do
+      assert_select "#retirement-plan-monte-carlo [data-monte-carlo-pending]"
+    end
   end
 
   test "without a cached result one run is enqueued and the page says it is calculating, however often it is opened" do

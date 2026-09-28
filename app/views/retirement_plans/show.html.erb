@@ -22,7 +22,12 @@
     <%= turbo_stream_from Current.user, :retirement_plan %>
     <%= render DS::Card.new do %>
       <h2 class="text-sm font-medium text-primary mb-3"><%= t(".monte_carlo") %></h2>
-      <%= render "retirement_plans/monte_carlo", plan: @retirement_plan, result: @monte_carlo %>
+      <%# The run can finish before the stream above subscribes, and a missed
+          broadcast is not replayed, so while pending the section also polls. %>
+      <%= turbo_frame_tag "retirement-plan-monte-carlo-frame",
+            data: @monte_carlo.nil? ? { controller: "polling", polling_url_value: retirement_plan_path, polling_interval_value: 5000 } : {} do %>
+        <%= render "retirement_plans/monte_carlo", plan: @retirement_plan, result: @monte_carlo %>
+      <% end %>
     <% end %>
   <% end %>
 

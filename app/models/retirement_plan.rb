@@ -154,14 +154,17 @@ class RetirementPlan < ApplicationRecord
     "retirement_plan/monte_carlo/#{Digest::SHA256.hexdigest(fingerprint.to_json)}"
   end
 
-  # Computes the result for the page and the cache: plain values only.
+  # Computes the result for the page and the cache: plain values only. The
+  # confident year is a full run for each candidate year and only FIRE mode
+  # shows it, so it is searched for only there; the mode is in the cache key.
   def monte_carlo_result(as_of:)
     mc = monte_carlo(as_of: as_of)
     return nil if mc.nil?
 
     {
       as_of: as_of, retirement_year: mc.retirement_year, success_rate: mc.success_rate,
-      stress_success_rate: mc.stress_success_rate, confident_year: mc.confident_year(success_target),
+      stress_success_rate: mc.stress_success_rate,
+      confident_year: (mc.confident_year(success_target) if mode == "fire"),
       percentiles: mc.percentiles, heatmap: mc.heatmap,
       expected_annual_return: mc.expected_annual_return, savings_rate: mc.savings_rate
     }
@@ -169,11 +172,15 @@ class RetirementPlan < ApplicationRecord
 
   # Enqueues the run unless one for the same inputs is already queued.
   def enqueue_monte_carlo(as_of:)
-    key = monte_carlo_cache_key(as_of: as_of)
-    return false unless Rails.cache.write("#{key}/pending", true, unless_exist: true, expires_in: 10.minutes)
+    return false unless Rails.cache.write(monte_carlo_pending_key(as_of: as_of), true, unless_exist: true, expires_in: 10.minutes)
 
     RetirementPlan::MonteCarloJob.perform_later(id, as_of.iso8601)
     true
+  end
+
+  # Set while a run for these inputs is queued or running.
+  def monte_carlo_pending_key(as_of:)
+    "#{monte_carlo_cache_key(as_of: as_of)}/pending"
   end
 
   # The accounts a user may fund the plan from: those they count in their own
