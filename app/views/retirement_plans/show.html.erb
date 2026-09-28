@@ -1,0 +1,59 @@
+<div class="@container space-y-6 pb-6 lg:pb-12">
+  <header class="flex flex-wrap items-start justify-between gap-3">
+    <div>
+      <div class="flex items-center gap-2">
+        <h1 class="text-2xl font-semibold text-primary"><%= t(".title") %></h1>
+        <%= render DS::Pill.new(label: t("shared.preview"), size: :md) %>
+      </div>
+      <p class="text-sm text-secondary mt-1"><%= t(".subtitle") %></p>
+    </div>
+    <%= render DS::Link.new(text: t(".settings"), variant: "secondary", size: "sm",
+                            icon: "settings-2", href: edit_retirement_plan_path, frame: :modal) %>
+  </header>
+
+  <%= render DS::Card.new do %>
+    <%= render RetirementPlans::PlannerComponent.new(
+      plan: @retirement_plan, simulation: @simulation, solution: @solution,
+      currency: Current.user.family.currency
+    ) %>
+  <% end %>
+
+  <%= render DS::Card.new do %>
+    <div class="flex items-center justify-between gap-2 mb-3">
+      <h2 class="text-sm font-medium text-primary"><%= t(".streams") %></h2>
+      <%= render DS::Link.new(text: t(".add_stream"), variant: "secondary", size: "sm", icon: "plus",
+                              href: new_retirement_plan_stream_path, frame: :modal) %>
+    </div>
+
+    <% if @streams.any? %>
+      <ul class="divide-y divide-divider" id="retirement-plan-streams">
+        <% @streams.each do |stream| %>
+          <li class="flex items-center justify-between gap-3 py-2" data-stream-id="<%= stream.id %>">
+            <div>
+              <p class="text-sm text-primary"><%= stream.name %></p>
+              <p class="text-xs text-secondary">
+                <%= t(".stream_kinds.#{stream.kind}") %> ·
+                <%= t(".stream_years", from: stream.start_year || t(".now"), to: stream.end_year || t(".end_age")) %>
+                <% unless stream.indexed %> · <%= t(".fixed") %><% end %>
+              </p>
+            </div>
+            <div class="flex items-center gap-2">
+              <span class="text-sm text-primary tabular-nums privacy-sensitive">
+                <%= Money.new(stream.annual_amount, Current.user.family.currency).format(precision: 0) %>
+              </span>
+              <%= render DS::Menu.new do |menu| %>
+                <% menu.with_item(variant: "link", text: t(".edit"), icon: "pencil-line",
+                                  href: edit_retirement_plan_stream_path(stream), data: { turbo_frame: :modal }) %>
+                <% menu.with_item(variant: "button", text: t(".delete"), icon: "trash-2",
+                                  href: retirement_plan_stream_path(stream), method: :delete, destructive: true,
+                                  confirm: t(".confirm_delete", name: stream.name)) %>
+              <% end %>
+            </div>
+          </li>
+        <% end %>
+      </ul>
+    <% else %>
+      <p class="text-sm text-secondary"><%= t(".no_streams") %></p>
+    <% end %>
+  <% end %>
+</div>

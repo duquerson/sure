@@ -328,7 +328,7 @@ class PortfoliosControllerTest < ActionDispatch::IntegrationTest
     # family's period moves no value, so every component is zero and the
     # section hides rather than printing a table of zeros that reconciles to
     # zero.
-    assert_equal %w[value_chart kpis performance index_chart comparison realized_gains holdings accounts allocation data_quality],
+    assert_equal %w[value_chart kpis performance index_chart comparison realized_gains holdings accounts allocation data_quality retirement],
       css_select("[data-section-key]").map { |node| node["data-section-key"] }
     assert_select "[data-section-key=kpis][data-reports-section-collapsed-value=?]", "true"
     assert_select "[data-section-key=value_chart][data-reports-section-collapsed-value=?]", "false"
@@ -649,18 +649,22 @@ class PortfoliosControllerTest < ActionDispatch::IntegrationTest
     assert_select "[data-portfolio-issue-kind='missing_cost_basis']", text: /#{I18n.t("portfolios.data_quality.read_only")}/
   end
 
-  # Measured 87, ceiling 93 -- the same 6 of headroom every previous pair
-  # carried. The figure has moved twice:
+  # Measured 95, ceiling 101 -- the same 6 of headroom every previous pair
+  # carried. The figure has moved three times:
   #
   #   54 -> 61  the performance section: one Portfolio::Performance for the
   #             request, memoised on the registry, which is its only caller
   #   61 -> 87  the account comparison: one more Portfolio::Performance per
   #             line, capped at five accounts plus the portfolio (D7)
+  #   87 -> 95  the retirement section (#127): the viewer's plan, one
+  #             DISTINCT ON balances read, and one IncomeStatement median with
+  #             the account-id lookups it always makes. Per request, not per
+  #             account or holding
   #
   # Neither rise is per holding, and the comparison's is bounded rather than
   # merely small: the two tests above prove both, and those assertions -- not
   # this constant -- are the ones that matter.
-  PORTFOLIO_QUERY_CEILING = 93
+  PORTFOLIO_QUERY_CEILING = 101
 
   # The section hides itself on every fixture family, so nothing rendered this
   # partial and CI green said nothing about it. One measurable disposal and one
