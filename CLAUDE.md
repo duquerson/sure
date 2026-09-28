@@ -199,8 +199,8 @@ So ask a second question before pushing:
 
 > **What else reads what I just changed the reading of?**
 
-Both of these shipped on #226 and were caught by review rather than by the
-author, and both were one grep away:
+Both of these were missed by the author on #226 and caught in review, and
+both were one grep away:
 
 - A parent filter was threaded into `allocation_holdings_within`'s look-through
   branch. `holdings_classified_as` -- the flat branch's selector -- had the
