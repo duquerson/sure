@@ -53,10 +53,17 @@ class RetirementPlan < ApplicationRecord
   # portfolio a withdrawal rate can be applied to.
   LIQUID_AND_INVESTMENT_TYPES = %w[Depository Investment Crypto].freeze
 
+  # IncomeStatement counts money moved into an investment account as an
+  # expense, which is right for a budget. For a FIRE plan it is saving:
+  # counted as spending, it would raise the FI number and lower the derived
+  # savings rate at once. Loan payments stay in, because until a loan is paid
+  # off they are money the user has to find every month.
+  SAVING_KINDS = %w[investment_contribution].freeze
+
   def projection(as_of:)
     RetirementPlan::Projection.new(
       as_of: as_of,
-      annual_expenses: income_statement.median_expense(interval: "month").to_d * 12,
+      annual_expenses: income_statement.median_expense(interval: "month", excluding_kinds: SAVING_KINDS).to_d * 12,
       annual_income: income_statement.median_income(interval: "month").to_d * 12,
       current_assets: assets_as_of(as_of).total,
       safe_withdrawal_rate: safe_withdrawal_rate,
