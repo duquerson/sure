@@ -97,8 +97,12 @@ class RetirementPlans::PlannerTest < ActionDispatch::IntegrationTest
     assert_equal [ "income", BigDecimal("11000"), 2047, "manual" ], [ stream.kind, stream.annual_amount, stream.start_year, stream.source ]
   end
 
+  # A user with no saved plan yet: the plan the stream would belong to is not
+  # created either (CodeRabbit on #251).
   test "an invalid stream is refused and nothing is written" do
-    assert_no_difference "RetirementPlan::Stream.count" do
+    assert_not RetirementPlan.exists?(user: @user), "the user must start without a plan"
+
+    assert_no_difference [ "RetirementPlan::Stream.count", "RetirementPlan.count" ] do
       post retirement_plan_streams_url, params: { retirement_plan_stream: { kind: "expense", name: "", annual_amount: "0" } }
     end
 

@@ -10,11 +10,16 @@ class RetirementPlans::StreamsController < ApplicationController
     @stream = @retirement_plan.streams.new(kind: "expense", indexed: true)
   end
 
+  # A user's first stream also saves their plan. One transaction, so an invalid
+  # stream leaves no empty plan behind.
   def create
-    @retirement_plan.save! if @retirement_plan.new_record?
-    @stream = @retirement_plan.streams.new(stream_params.merge(source: "manual"))
+    saved = RetirementPlan.transaction do
+      @retirement_plan.save! if @retirement_plan.new_record?
+      @stream = @retirement_plan.streams.new(stream_params.merge(source: "manual"))
+      @stream.save || raise(ActiveRecord::Rollback)
+    end
 
-    if @stream.save
+    if saved
       redirect_to retirement_plan_path, notice: t(".success")
     else
       render :new, status: :unprocessable_entity
