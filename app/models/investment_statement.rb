@@ -916,6 +916,10 @@ class InvestmentStatement
       build_segments(segments)
     end
 
+    # Value by the currency each holding is priced in, plus each account's
+    # positive cash balance in the account's currency. Reads
+    # `allocatable_holdings` so a corrupt negative row cannot net against a good
+    # one here while the drill-down below drops it.
     def allocation_by_currency
       grouped = Hash.new(0)
       allocatable_holdings.each { |holding| grouped[holding.currency] += convert_to_family_currency(holding.amount, holding.currency) }
@@ -926,6 +930,10 @@ class InvestmentStatement
       build_segments(grouped.map { |currency, value| [ currency, currency, value ] })
     end
 
+    # Value by what kind of instrument each holding is -- cash, crypto or a
+    # standard security -- from the security's own flags, with each account's
+    # positive cash balance under cash. Reads `allocatable_holdings` for the
+    # same reason as `allocation_by_currency`.
     def allocation_by_kind
       grouped = Hash.new(0)
       allocatable_holdings.each do |holding|
@@ -1387,6 +1395,10 @@ class InvestmentStatement
       security.public_send(column).presence || UNCLASSIFIED
     end
 
+    # The allocatable holdings filed under `bucket` for `column`, which is what
+    # the look-through-off bottom level lists. `parent`, when given, also
+    # requires the holding's asset class to match, because a sub-class name such
+    # as `unclassified` repeats across asset classes (see `allocation_children`).
     def holdings_classified_as(column, bucket, cash_bucket = nil, parent: nil)
       allocatable_holdings.select do |holding|
         classification_bucket(holding.security, column, cash_bucket) == bucket &&
