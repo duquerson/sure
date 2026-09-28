@@ -26,13 +26,17 @@ class RetirementPlan < ApplicationRecord
   validates :inflation_rate, presence: true, numericality: { greater_than: -1, less_than_or_equal_to: 1 }
   validates :mode, inclusion: { in: MODES }
 
+  # Monte Carlo (8.3). Mirrors the database checks.
+  validates :return_volatility, presence: true, numericality: { greater_than_or_equal_to: 0, less_than_or_equal_to: 1 }
+  validates :success_target, presence: true, numericality: { greater_than: 0, less_than_or_equal_to: 1 }
+
   # The user's saved plan, or an unsaved one carrying the column defaults.
   # Never writes: opening a page must not create a row.
   def self.for(user)
     find_by(user: user) || new(user: user)
   end
 
-  PERCENT_ATTRIBUTES = %i[safe_withdrawal_rate expected_annual_return savings_rate inflation_rate].freeze
+  PERCENT_ATTRIBUTES = %i[safe_withdrawal_rate expected_annual_return savings_rate inflation_rate return_volatility success_target].freeze
 
   # The form speaks in percent; the columns hold fractions. Blank stays blank,
   # which for the savings rate means "derive it". Input that is not a number
