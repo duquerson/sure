@@ -41,12 +41,19 @@ class RetirementPlan::MonteCarlo
     sorted[[ (p / 100.0 * sorted.size).ceil - 1, 0 ].max]
   end
 
+  attr_reader :retirement_year, :volatility, :seed, :paths, :savings_rate
+
+  def expected_annual_return
+    @inputs.fetch(:expected_annual_return).to_d
+  end
+
   def initialize(simulation_inputs:, retirement_year:, annual_income:, savings_rate:, volatility:, seed:, paths:)
     @inputs = simulation_inputs
     @retirement_year = retirement_year
     @annual_income = annual_income.to_d
     @savings_rate = savings_rate.to_d
-    @volatility = volatility.to_f
+    @volatility = volatility
+    @sigma = volatility.to_f
     @seed = seed
     @paths = paths
   end
@@ -133,7 +140,7 @@ class RetirementPlan::MonteCarlo
       values = [] if keep_values
 
       draws.each do |z|
-        growth = z.map { |zt| base * Math.exp(@volatility * zt) }
+        growth = z.map { |zt| base * Math.exp(@sigma * zt) }
         if worst_first && retired_from.between?(0, year_count - 1)
           growth = growth[0...retired_from] + growth[retired_from..].sort
         end
