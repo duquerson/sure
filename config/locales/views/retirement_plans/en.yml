@@ -84,6 +84,18 @@ en:
       chart:
         nominal: Portfolio
         real: In today's money
+      milestones:
+        title: Milestones, in today's money
+        names:
+          fi_25: 25% of your FI number
+          fi_50: 50% of your FI number
+          fi_75: 75% of your FI number
+          fi_100: Financial independence
+          coast: Coast FI
+        reached: Reached
+        in_year: "%{year}, at %{age}"
+        not_reached: Not within the plan
+        coast_hint: "Coast FI is when your savings alone, with nothing more added, would grow to your FI number by %{year}."
     streams:
       seeded:
         living_costs: Living costs

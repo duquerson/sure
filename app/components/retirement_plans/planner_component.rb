@@ -6,13 +6,14 @@
 # (and, in FIRE mode, the RetirementPlan::Solver result) the controller built
 # with its one reference date.
 class RetirementPlans::PlannerComponent < ViewComponent::Base
-  attr_reader :plan, :simulation, :solution, :currency
+  attr_reader :plan, :simulation, :solution, :currency, :milestones
 
-  def initialize(plan:, simulation:, solution:, currency:)
+  def initialize(plan:, simulation:, solution:, currency:, milestones: [])
     @plan = plan
     @simulation = simulation
     @solution = solution
     @currency = currency
+    @milestones = milestones
   end
 
   def fire?
@@ -33,6 +34,26 @@ class RetirementPlans::PlannerComponent < ViewComponent::Base
 
   def retired?(row)
     row.year >= simulation.retirement_year
+  end
+
+  # The milestones reached within the plan, by the year they land in (8.4a).
+  def milestones_in(year)
+    @milestones_by_year ||= milestones.select(&:year).group_by(&:year)
+    @milestones_by_year.fetch(year, [])
+  end
+
+  def milestone_name(milestone)
+    t("retirement_plans.planner.milestones.names.#{milestone.key}")
+  end
+
+  def milestone_when(milestone)
+    if milestone.reached_already
+      t("retirement_plans.planner.milestones.reached")
+    elsif milestone.year
+      t("retirement_plans.planner.milestones.in_year", year: milestone.year, age: milestone.age)
+    else
+      t("retirement_plans.planner.milestones.not_reached")
+    end
   end
 
   def money(amount)

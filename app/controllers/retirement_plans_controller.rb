@@ -13,6 +13,8 @@ class RetirementPlansController < ApplicationController
     else
       @simulation = @retirement_plan.simulation(as_of: @as_of)
     end
+
+    @milestones = @simulation ? @retirement_plan.milestones(as_of: @as_of, simulation: @simulation) : []
   end
 
   def edit
