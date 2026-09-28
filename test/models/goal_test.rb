@@ -1314,6 +1314,27 @@ class GoalTest < ActiveSupport::TestCase
     assert_equal [ nil, nil ], list.drop(1).map { |m| m[:date] }
   end
 
+  # A slow pace would otherwise date a milestone centuries out (Production
+  # Readiness Review on #256). The chart never draws past the target date, so
+  # the payload stops there too.
+  test "a milestone the pace would reach only after the target date has no date" do
+    goal = milestone_goal
+    goal.stubs(:target_date).returns(Date.new(2026, 6, 15))
+
+    list = goal.milestones(as_of: Date.new(2026, 3, 15))
+
+    # 50% falls on 2026-05-15, inside the target date; 75% on 2026-10-15, after it.
+    assert_equal [ [ "2026-05-15", false ], [ nil, false ] ], list.drop(1).map { |m| m.values_at(:date, :reached) }
+    assert_nil list[2][:label]
+  end
+
+  test "a milestone on the target date itself keeps its date" do
+    goal = milestone_goal
+    goal.stubs(:target_date).returns(Date.new(2026, 10, 15))
+
+    assert_equal "2026-10-15", goal.milestones(as_of: Date.new(2026, 3, 15))[2][:date]
+  end
+
   test "a goal without a target has no milestones" do
     goal = milestone_goal
     goal.stubs(:target_amount).returns(0)

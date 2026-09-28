@@ -822,6 +822,9 @@ class Goal < ApplicationRecord
       amount = target * percent / 100
       reached = saved >= amount
       date = as_of >> ((amount - saved) / monthly).ceil if !reached && monthly.positive?
+      # The chart stops at the target date, so a milestone the pace reaches
+      # only after it is left undated rather than dated centuries out.
+      date = nil if date && target_date && date > target_date
 
       {
         percent: percent, amount: amount.to_f, reached: reached, date: date&.to_s,
