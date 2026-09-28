@@ -14,6 +14,7 @@ class RetirementPlan < ApplicationRecord
   # answer from an explicit zero.
   validates :savings_rate, numericality: { greater_than_or_equal_to: 0, less_than_or_equal_to: 1 },
                            allow_nil: true
+  validate :percent_inputs_are_numbers
 
   # The user's saved plan, or an unsaved one carrying the column defaults.
   # Never writes: opening a page must not create a row.
@@ -21,16 +22,29 @@ class RetirementPlan < ApplicationRecord
     find_by(user: user) || new(user: user)
   end
 
+  PERCENT_ATTRIBUTES = %i[safe_withdrawal_rate expected_annual_return savings_rate].freeze
+
   # The form speaks in percent; the columns hold fractions. Blank stays blank,
-  # which for the savings rate means "derive it".
-  %i[safe_withdrawal_rate expected_annual_return savings_rate].each do |attribute|
+  # which for the savings rate means "derive it". Input that is not a number
+  # is refused, not read as zero: "abc".to_d is 0, and an explicit 0% savings
+  # rate switches off the derived one. The attribute keeps what it held, and
+  # the error sits on the field the user typed into.
+  PERCENT_ATTRIBUTES.each do |attribute|
     define_method(:"#{attribute}_percent") do
       value = public_send(attribute)
       value && (value * 100)
     end
 
     define_method(:"#{attribute}_percent=") do |percent|
-      public_send(:"#{attribute}=", percent.blank? ? nil : percent.to_s.to_d / 100)
+      non_numeric_percents.delete(attribute)
+
+      if percent.blank?
+        public_send(:"#{attribute}=", nil)
+      elsif (parsed = BigDecimal(percent.to_s.strip, exception: false))
+        public_send(:"#{attribute}=", parsed / 100)
+      else
+        non_numeric_percents << attribute
+      end
     end
   end
 
@@ -59,6 +73,14 @@ class RetirementPlan < ApplicationRecord
   end
 
   private
+    def non_numeric_percents
+      @non_numeric_percents ||= Set.new
+    end
+
+    def percent_inputs_are_numbers
+      non_numeric_percents.each { |attribute| errors.add(:"#{attribute}_percent", :not_a_number) }
+    end
+
     AssetTotal = Data.define(:total, :unconverted_count)
 
     # The same scope /portfolio uses (InvestmentStatement#investment_accounts):

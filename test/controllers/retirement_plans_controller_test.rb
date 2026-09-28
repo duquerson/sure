@@ -59,6 +59,14 @@ class RetirementPlansControllerTest < ActionDispatch::IntegrationTest
     assert_response :unprocessable_entity
   end
 
+  test "a savings rate that is not a number is refused and nothing is written" do
+    assert_no_difference "RetirementPlan.count" do
+      patch retirement_plan_url, params: { retirement_plan: { savings_rate_percent: "abc" } }
+    end
+
+    assert_response :unprocessable_entity
+  end
+
   test "the plan page shows the FI card, and the portfolio shows the section" do
     get plan_url
     assert_response :success

@@ -60,6 +60,23 @@ class RetirementPlanTest < ActiveSupport::TestCase
     assert RetirementPlan.new(user: @admin, savings_rate: 0).valid?
   end
 
+  # "abc".to_d is 0, so reading the input that way would save an explicit 0%
+  # savings rate, which switches off the derived rate, from a typo.
+  test "a percent that is not a number is refused rather than read as zero" do
+    plan = RetirementPlan.new(user: @admin, savings_rate: BigDecimal("0.3"))
+
+    plan.savings_rate_percent = "abc"
+
+    assert_not plan.valid?
+    assert plan.errors.key?(:savings_rate_percent)
+    assert_equal BigDecimal("0.3"), plan.savings_rate, "the value already held is kept"
+
+    plan.savings_rate_percent = "12"
+
+    assert plan.valid?, "a later valid entry clears the error"
+    assert_equal BigDecimal("0.12"), plan.savings_rate
+  end
+
   test "the database refuses a withdrawal rate of zero that bypasses the model" do
     plan = RetirementPlan.create!(user: @admin)
 
