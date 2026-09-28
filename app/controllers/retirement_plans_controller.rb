@@ -18,10 +18,17 @@ class RetirementPlansController < ApplicationController
   def edit
   end
 
+  # Seeded after a save, never on a page view, and only the first time. The
+  # settings and the seeding commit together, so a failure part-way leaves
+  # neither behind.
   def update
-    if @retirement_plan.update(retirement_plan_params)
-      # Seeded after a save, never on a page view, and only the first time.
+    saved = RetirementPlan.transaction do
+      @retirement_plan.update(retirement_plan_params) || raise(ActiveRecord::Rollback)
       @retirement_plan.seed_streams!(as_of: Date.current)
+      true
+    end
+
+    if saved
       redirect_back_or_to plan_path, notice: t(".success")
     else
       render :edit, status: :unprocessable_entity

@@ -115,11 +115,12 @@ class RetirementPlan < ApplicationRecord
 
   # Seeds the plan's streams from the user's spending and loans, once. Called
   # by the controller after a save, never on a page view, with the page's
-  # reference date.
+  # reference date. The row lock reloads the plan, so two saves that race
+  # here seed once between them.
   def seed_streams!(as_of:)
-    return if streams_seeded_on.present?
+    with_lock do
+      next if streams_seeded_on.present?
 
-    transaction do
       seed_living_costs(as_of)
       seed_loans(as_of)
       update!(streams_seeded_on: as_of)
