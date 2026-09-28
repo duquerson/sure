@@ -401,6 +401,43 @@ export default class extends Controller {
             .text(labelText);
         }
       }
+
+      // Milestones (#127, 8.4b): a dot where the projection line crosses 25%,
+      // 50% and 75% of the target, labelled with the month the server worked
+      // out. The crossing uses the line's own month length, so the dot sits
+      // on it. Payloads from before milestones existed carry none.
+      if (avgMonthly > 0) {
+        (data.milestones || [])
+          .filter((m) => !m.reached && m.label)
+          .forEach((m) => {
+            const at = new Date(today.getTime() + ((m.amount - currentAmount) / avgMonthly) * 1000 * 60 * 60 * 24 * 30.44);
+            if (at.getTime() > target.getTime()) return;
+
+            svg
+              .append("circle")
+              .attr("cx", x(at))
+              .attr("cy", y(m.amount))
+              .attr("r", 3)
+              .attr("fill", containerBg)
+              .attr("stroke", projColor)
+              .attr("stroke-width", 2)
+              .attr("data-milestone", m.percent);
+
+            if (innerWidth >= 320) {
+              svg
+                .append("text")
+                .attr("x", x(at) + 6)
+                .attr("y", y(m.amount) + 14)
+                .attr("font-size", 11)
+                .attr("fill", textSecondary)
+                .attr("paint-order", "stroke")
+                .attr("stroke", containerBg)
+                .attr("stroke-width", 4)
+                .attr("stroke-linejoin", "round")
+                .text(m.label);
+            }
+          });
+      }
     }
 
     svg
