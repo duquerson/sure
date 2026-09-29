@@ -100,6 +100,7 @@ class Security < ApplicationRecord
 
   has_many :trades, dependent: :nullify, class_name: "Trade"
   has_many :prices, dependent: :destroy
+  has_many :splits, dependent: :destroy
   # A security row is shared by every family that holds the instrument, but a
   # `Tag` carries `family_id` -- so a tagging is only reachable through its
   # owning family's tags. That makes tags the family-scoped counterpart to the
@@ -320,6 +321,13 @@ class Security < ApplicationRecord
     @current_price ||= find_or_fetch_price
     return nil if @current_price.nil?
     Money.new(@current_price.price, @current_price.currency)
+  end
+
+  # How many shares one share held at the close of `from` has become by the
+  # close of `to`: the product of the ratios of splits whose ex-date falls
+  # after `from` and on or before `to`. 1 when there are none.
+  def split_factor_between(from, to)
+    splits.where(ex_date: (from + 1)..to).reduce(Rational(1)) { |factor, split| factor * split.ratio }
   end
 
   def to_combobox_option
