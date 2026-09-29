@@ -150,10 +150,14 @@ class Loan::PayoffProjectionTest < ActiveSupport::TestCase
     assert_equal baseline.total_interest.amount, with_empty_offset.total_interest.amount
   end
 
+  # The date is pinned rather than taken from `Date.current`: built on the 29th
+  # or 30th of a month this used to fail, because the projection and the
+  # schedule generated different calendars from a month-end anchor (#257).
   test "matches the original schedule (within a rounding-driven cleanup payment) when the current balance equals the original balance" do
-    loan = build_loan(balance: 500000)
+    drawdown = Date.new(2026, 6, 15)
+    loan = build_loan(balance: 500000, start_date: drawdown)
 
-    projection = loan.payoff_projection
+    projection = Loan::PayoffProjection.new(loan, as_of: drawdown)
 
     # The original schedule forces its (known-in-advance) final payment to
     # exactly clear the balance, adjusting that payment's amount. This
@@ -173,6 +177,50 @@ class Loan::PayoffProjectionTest < ActiveSupport::TestCase
     assert projection.months_saved.between?(-1, 0)
     assert projection.cleanup_payment_artefact?
     assert_not projection.diverges_from_schedule?
+  end
+
+  # #257. The schedule steps its dates from the previous one, so a clamped
+  # month-end never recovers: 29 Sep -> ... -> 28 Feb -> 28 Mar. The projection
+  # offset each date from the first instead, so it went back to the 29th in
+  # March. From the first February onwards the two calendars disagreed on 334
+  # of 360 payments, and because accrual is daily every shifted boundary moved
+  # interest -- $127 on a 29th start, $249 on a 30th.
+  test "the projected calendar is the contracted calendar, for a month-end start" do
+    drawdown = Date.new(2026, 9, 29)
+    loan = build_loan(balance: 500_000, start_date: drawdown)
+    projection = Loan::PayoffProjection.new(loan, as_of: drawdown)
+
+    contracted = loan.amortization_schedule.display_rows.map(&:payment_date).select { |date| date > drawdown }
+
+    assert_equal contracted, projection.send(:projected_payment_dates).first(contracted.length)
+  end
+
+  test "an on-contract month-end loan does not read as diverging" do
+    [ Date.new(2026, 9, 29), Date.new(2026, 9, 30), Date.new(2026, 3, 31) ].each do |drawdown|
+      loan = build_loan(balance: 500_000, start_date: drawdown)
+      projection = Loan::PayoffProjection.new(loan, as_of: drawdown)
+
+      assert_not projection.diverges_from_schedule?, "a loan drawn down on #{drawdown} sits on its own contract"
+      assert_operator projection.interest_saved.abs, :<, 5,
+        "#{drawdown}: only the cleanup-payment artefact should separate the two"
+    end
+  end
+
+  # The calendars agree from any starting point, not just origination. Two are
+  # checked: one before the first February, where the remaining rows still fall
+  # on the 29th and the clamp is still ahead, and one long after it, where the
+  # step starts from a row already clamped to the 28th and must stay there.
+  test "the calendars still agree when the projection starts mid-loan" do
+    drawdown = Date.new(2026, 9, 29)
+    loan = build_loan(balance: 500_000, start_date: drawdown)
+
+    [ drawdown + 2.months, drawdown + 40.months ].each do |as_of|
+      projection = Loan::PayoffProjection.new(loan, as_of: as_of)
+      contracted = loan.amortization_schedule.display_rows.map(&:payment_date).select { |date| date > as_of }
+
+      assert_equal contracted, projection.send(:projected_payment_dates).first(contracted.length),
+        "the calendars must agree from #{as_of}"
+    end
   end
 
   # Regression: the projection built its simulator without
