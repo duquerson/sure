@@ -26,13 +26,17 @@ class RetirementPlan < ApplicationRecord
   validates :inflation_rate, presence: true, numericality: { greater_than: -1, less_than_or_equal_to: 1 }
   validates :mode, inclusion: { in: MODES }
 
+  # Monte Carlo (8.3). Mirrors the database checks.
+  validates :return_volatility, presence: true, numericality: { greater_than_or_equal_to: 0, less_than_or_equal_to: 1 }
+  validates :success_target, presence: true, numericality: { greater_than: 0, less_than_or_equal_to: 1 }
+
   # The user's saved plan, or an unsaved one carrying the column defaults.
   # Never writes: opening a page must not create a row.
   def self.for(user)
     find_by(user: user) || new(user: user)
   end
 
-  PERCENT_ATTRIBUTES = %i[safe_withdrawal_rate expected_annual_return savings_rate inflation_rate].freeze
+  PERCENT_ATTRIBUTES = %i[safe_withdrawal_rate expected_annual_return savings_rate inflation_rate return_volatility success_target].freeze
 
   # The form speaks in percent; the columns hold fractions. Blank stays blank,
   # which for the savings rate means "derive it". Input that is not a number
@@ -107,6 +111,101 @@ class RetirementPlan < ApplicationRecord
     RetirementPlan::Solver.new(**simulation_inputs(as_of:)).call
   end
 
+  # --- Monte Carlo (8.3) -----------------------------------------------------
+
+  MONTE_CARLO_PATHS = 5_000
+  # Bumped whenever the engine's arithmetic changes, so cached results from
+  # the old engine are never shown.
+  MONTE_CARLO_ENGINE_VERSION = 1
+
+  # Fixed by the plan, so a plan always draws the same paths: the same inputs
+  # give the same answer on every visit.
+  def monte_carlo_seed
+    Zlib.crc32(id.to_s)
+  end
+
+  # The run for this plan: retiring on its date, or in FIRE mode in the
+  # expected-returns year. Nil while the plan cannot be simulated.
+  def monte_carlo(as_of:)
+    year = monte_carlo_retirement_year(as_of)
+    return nil if year.nil? || new_record?
+
+    projection = projection(as_of: as_of)
+    RetirementPlan::MonteCarlo.new(
+      simulation_inputs: simulation_inputs(as_of:), retirement_year: year,
+      annual_income: projection.annual_income, savings_rate: projection.effective_savings_rate,
+      volatility: return_volatility, seed: monte_carlo_seed, paths: MONTE_CARLO_PATHS
+    )
+  end
+
+  # Everything a result depends on, digested. No version column: any change
+  # to an input changes the key, and so does a change to the engine.
+  def monte_carlo_cache_key(as_of:)
+    inputs = simulation_inputs(as_of:)
+    projection = projection(as_of: as_of)
+    fingerprint = {
+      engine: MONTE_CARLO_ENGINE_VERSION, paths: MONTE_CARLO_PATHS, seed: monte_carlo_seed,
+      as_of: as_of.iso8601, mode: mode, retirement_date: retirement_date&.iso8601,
+      volatility: return_volatility.to_s, target: success_target.to_s,
+      income: projection.annual_income.to_s, savings_rate: projection.effective_savings_rate.to_d.to_s,
+      inputs: inputs.except(:as_of, :streams).transform_values(&:to_s),
+      streams: inputs[:streams].map { |stream| stream.to_h.transform_values(&:to_s) }
+    }
+    "retirement_plan/monte_carlo/#{Digest::SHA256.hexdigest(fingerprint.to_json)}"
+  end
+
+  # Computes the result for the page and the cache: plain values only. The
+  # confident year is a full run for each candidate year and only FIRE mode
+  # shows it, so it is searched for only there; the mode is in the cache key.
+  def monte_carlo_result(as_of:)
+    mc = monte_carlo(as_of: as_of)
+    return nil if mc.nil?
+
+    {
+      as_of: as_of, retirement_year: mc.retirement_year, success_rate: mc.success_rate,
+      stress_success_rate: mc.stress_success_rate,
+      confident_year: (mc.confident_year(success_target) if mode == "fire"),
+      percentiles: mc.percentiles, heatmap: mc.heatmap,
+      expected_annual_return: mc.expected_annual_return, savings_rate: mc.savings_rate
+    }
+  end
+
+  # Enqueues the run unless one for the same inputs is already queued. A run
+  # that did not queue takes its marker back, so the page is not left saying
+  # "calculating" with nothing running.
+  def enqueue_monte_carlo(as_of:, key: monte_carlo_cache_key(as_of: as_of))
+    pending = self.class.monte_carlo_marker(key, :pending)
+    return false unless Rails.cache.write(pending, true, unless_exist: true, expires_in: 10.minutes)
+
+    begin
+      queued = RetirementPlan::MonteCarloJob.perform_later(id, as_of.iso8601)
+    rescue StandardError
+      Rails.cache.delete(pending)
+      raise
+    end
+    return true if queued&.successfully_enqueued?
+
+    Rails.cache.delete(pending)
+    false
+  end
+
+  # Set while a run for these inputs is queued or running.
+  def monte_carlo_pending_key(as_of:)
+    self.class.monte_carlo_marker(monte_carlo_cache_key(as_of: as_of), :pending)
+  end
+
+  # Beside a result's key: `pending` while its run is queued or running,
+  # `failed` once the run has raised.
+  def self.monte_carlo_marker(key, name)
+    "#{key}/#{name}"
+  end
+
+  # The digest part of a result's key, which names the page section showing
+  # those inputs.
+  def self.monte_carlo_digest(key)
+    key.delete_prefix("retirement_plan/monte_carlo/")
+  end
+
   # The accounts a user may fund the plan from: those they count in their own
   # finances, as 8.1's default uses.
   def eligible_funding_accounts
@@ -143,6 +242,13 @@ class RetirementPlan < ApplicationRecord
     end
 
     AssetTotal = Data.define(:total, :unconverted_count)
+
+    def monte_carlo_retirement_year(as_of)
+      return nil if birth_year.nil?
+      return retirement_date&.year unless mode == "fire"
+
+      solve(as_of: as_of).retirement_year || (birth_year + end_age)
+    end
 
     def simulation_inputs(as_of:)
       {

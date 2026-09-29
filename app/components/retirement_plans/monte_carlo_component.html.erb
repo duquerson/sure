@@ -1,0 +1,80 @@
+<div id="retirement-plan-monte-carlo" class="space-y-4" data-monte-carlo-key="<%= digest %>">
+  <% if failed? %>
+    <p class="text-sm text-warning" data-monte-carlo-failed><%= t("retirement_plans.monte_carlo.failed") %></p>
+  <% elsif pending? %>
+    <p class="text-sm text-secondary" data-monte-carlo-pending><%= t("retirement_plans.monte_carlo.pending") %></p>
+  <% else %>
+    <div class="grid grid-cols-1 @xl:grid-cols-3 gap-3">
+      <div>
+        <p class="text-xs text-secondary"><%= t("retirement_plans.monte_carlo.success_rate") %></p>
+        <p class="text-2xl font-medium tabular-nums <%= target_met? ? "text-success" : "text-warning" %>" data-success-rate="<%= result[:success_rate] %>">
+          <%= percent(result[:success_rate]) %>
+        </p>
+        <p class="text-xs text-subdued"><%= t("retirement_plans.monte_carlo.success_rate_hint", paths: helpers.number_with_delimiter(RetirementPlan::MONTE_CARLO_PATHS), year: result[:retirement_year]) %></p>
+      </div>
+      <div>
+        <p class="text-xs text-secondary"><%= t("retirement_plans.monte_carlo.stress") %></p>
+        <p class="text-2xl font-medium tabular-nums text-primary" data-stress-rate><%= percent(result[:stress_success_rate]) %></p>
+        <p class="text-xs text-subdued"><%= t("retirement_plans.monte_carlo.stress_hint") %></p>
+      </div>
+      <% if fire? %>
+        <div>
+          <p class="text-xs text-secondary"><%= t("retirement_plans.monte_carlo.confident_year", target: percent(plan.success_target)) %></p>
+          <% if result[:confident_year] %>
+            <p class="text-2xl font-medium tabular-nums text-primary" data-confident-year="<%= result[:confident_year] %>">
+              <%= result[:confident_year] %>
+            </p>
+            <p class="text-xs text-subdued"><%= t("retirement_plans.monte_carlo.at_age", age: confident_age) %></p>
+          <% else %>
+            <p class="text-sm text-warning" data-confident-year="none"><%= t("retirement_plans.monte_carlo.no_confident_year", end_age: plan.end_age) %></p>
+          <% end %>
+        </div>
+      <% end %>
+    </div>
+
+    <div>
+      <p class="text-xs text-secondary mb-2"><%= t("retirement_plans.monte_carlo.fan") %></p>
+      <%# The multi-line chart has no tooltip, so the legend names the lines,
+          as on the portfolio comparison. The dot carries text-primary because
+          the first series is drawn in currentColor. %>
+      <div class="flex flex-wrap items-center gap-x-4 gap-y-1 mb-2">
+        <% fan_series.each_with_index do |line, index| %>
+          <span class="flex items-center gap-1.5 text-xs text-secondary" data-fan-line="<%= index %>">
+            <span class="w-2 h-2 rounded-full text-primary" style="background-color: <%= helpers.portfolio_comparison_color(index) %>"></span>
+            <%= line[:label] %>
+          </span>
+        <% end %>
+      </div>
+      <div class="w-full h-64 privacy-sensitive text-primary"
+           data-controller="time-series-chart"
+           data-time-series-chart-use-tooltip-value="false"
+           data-time-series-chart-series-value="<%= fan_series.to_json %>"></div>
+    </div>
+
+    <div class="overflow-x-auto">
+      <p class="text-xs text-secondary mb-2"><%= t("retirement_plans.monte_carlo.heatmap") %></p>
+      <table id="retirement-plan-heatmap" class="text-sm tabular-nums">
+        <thead>
+          <tr class="text-xs text-secondary">
+            <th class="text-left py-1 px-2"><%= t("retirement_plans.monte_carlo.heatmap_axes") %></th>
+            <% heatmap_rows.first.each do |cell| %>
+              <th class="text-right py-1 px-2"><%= savings_label(cell[:savings_step]) %></th>
+            <% end %>
+          </tr>
+        </thead>
+        <tbody>
+          <% heatmap_rows.each do |row| %>
+            <tr class="border-t border-divider">
+              <th class="text-left py-1 px-2 text-xs text-secondary"><%= return_label(row.first[:return_step]) %></th>
+              <% row.each do |cell| %>
+                <td class="text-right py-1 px-2 <%= cell_class(cell[:success_rate]) %>"><%= percent(cell[:success_rate]) %></td>
+              <% end %>
+            </tr>
+          <% end %>
+        </tbody>
+      </table>
+    </div>
+
+    <p class="text-xs text-subdued"><%= t("retirement_plans.monte_carlo.assumptions", volatility: percent(plan.return_volatility)) %></p>
+  <% end %>
+</div>

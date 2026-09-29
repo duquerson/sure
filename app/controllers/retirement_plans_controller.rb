@@ -13,6 +13,8 @@ class RetirementPlansController < ApplicationController
     else
       @simulation = @retirement_plan.simulation(as_of: @as_of)
     end
+
+    load_monte_carlo
   end
 
   def edit
@@ -42,10 +44,26 @@ class RetirementPlansController < ApplicationController
       @retirement_plan = RetirementPlan.for(Current.user)
     end
 
+    # The cached Monte Carlo result, or a run enqueued for it (8.3). Only once
+    # the plan is saved and can be simulated: the seed comes from its id.
+    def load_monte_carlo
+      @monte_carlo_available = @retirement_plan.persisted? && (@simulation.present? || @solution.present?)
+      return unless @monte_carlo_available
+
+      @monte_carlo_key = @retirement_plan.monte_carlo_cache_key(as_of: @as_of)
+      @monte_carlo = Rails.cache.read(@monte_carlo_key)
+      return if @monte_carlo
+
+      # A run that raised is not asked for again; changed inputs are a new key.
+      @monte_carlo_failed = Rails.cache.exist?(RetirementPlan.monte_carlo_marker(@monte_carlo_key, :failed))
+      @retirement_plan.enqueue_monte_carlo(as_of: @as_of, key: @monte_carlo_key) unless @monte_carlo_failed
+    end
+
     def retirement_plan_params
       params.require(:retirement_plan).permit(
         :safe_withdrawal_rate_percent, :expected_annual_return_percent, :savings_rate_percent, :retirement_date,
-        :birth_year, :end_age, :inflation_rate_percent, :mode
+        :birth_year, :end_age, :inflation_rate_percent, :mode,
+        :return_volatility_percent, :success_target_percent
       )
     end
 end
