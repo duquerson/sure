@@ -401,6 +401,45 @@ export default class extends Controller {
             .text(labelText);
         }
       }
+
+      // Milestones (#127, 8.4b): a dot on the projection line at the date the
+      // server gives each of 25%, 50% and 75% of the target, labelled with
+      // that date's month. The dot sits on the line at that date, so it and
+      // its label always name the same month. Payloads from before
+      // milestones existed carry none.
+      if (avgMonthly > 0) {
+        (data.milestones || [])
+          .filter((m) => !m.reached && m.label && m.date)
+          .forEach((m) => {
+            const at = parseLocalDate(m.date);
+            if (at.getTime() > target.getTime()) return;
+            const onLine = currentAmount + avgMonthly * Math.max(0, this._monthsBetween(today, at));
+
+            svg
+              .append("circle")
+              .attr("cx", x(at))
+              .attr("cy", y(onLine))
+              .attr("r", 3)
+              .attr("fill", containerBg)
+              .attr("stroke", projColor)
+              .attr("stroke-width", 2)
+              .attr("data-milestone", m.percent);
+
+            if (innerWidth >= 320) {
+              svg
+                .append("text")
+                .attr("x", x(at) + 6)
+                .attr("y", y(onLine) + 14)
+                .attr("font-size", 11)
+                .attr("fill", textSecondary)
+                .attr("paint-order", "stroke")
+                .attr("stroke", containerBg)
+                .attr("stroke-width", 4)
+                .attr("stroke-linejoin", "round")
+                .text(m.label);
+            }
+          });
+      }
     }
 
     svg

@@ -33,6 +33,24 @@ class GoalsControllerTest < ActionDispatch::IntegrationTest
     assert_response :success
   end
 
+  # #127, 8.4b: the chart is drawn client-side from this payload, so what the
+  # page ships is what the markers come from.
+  test "the goal page ships the milestones to its projection chart" do
+    # A balance and a pace put the panel in its projection state, where the chart is.
+    goal = @user.family.goals.create!(name: "Milestone trip", target_amount: 1_000, currency: "USD",
+                                      target_date: Date.current.next_year) do |g|
+      g.goal_accounts.build(account: Account.create!(family: @user.family, accountable: Depository.new,
+                                                     name: "Milestone pot", currency: "USD", balance: 400))
+    end
+    Goal.any_instance.stubs(:current_balance).returns(BigDecimal("400"))
+    Goal.any_instance.stubs(:pace).returns(BigDecimal("50"))
+
+    get goal_url(goal)
+
+    payload = JSON.parse(css_select("[data-controller='goal-projection-chart']").first["data-goal-projection-chart-data-value"])
+    assert_equal [ 25, 50, 75 ], payload.fetch("milestones").map { |m| m["percent"] }
+  end
+
   test "show renders the goal" do
     get goal_url(@goal)
     assert_response :success
