@@ -14,7 +14,7 @@
   <%= render DS::Card.new do %>
     <%= render RetirementPlans::PlannerComponent.new(
       plan: @retirement_plan, simulation: @simulation, solution: @solution,
-      currency: Current.user.family.currency
+      currency: Current.user.family.currency, milestones: @milestones
     ) %>
   <% end %>
 

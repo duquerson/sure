@@ -29,6 +29,25 @@
     <% end %>
     <p class="text-xs text-subdued"><%= t("retirement_plans.planner.assumptions") %></p>
 
+    <% if milestones.any? %>
+      <div id="retirement-planner-milestones">
+        <p class="text-xs text-secondary mb-2"><%= t("retirement_plans.planner.milestones.title") %></p>
+        <ul class="text-sm space-y-1">
+          <% milestones.each do |milestone| %>
+            <li class="flex justify-between gap-4" data-milestone="<%= milestone.key %>"
+                <%= "data-milestone-reached" if milestone.reached_already %>
+                <%= "data-milestone-year=#{milestone.year}" if milestone.year %>>
+              <span class="text-primary"><%= milestone_name(milestone) %></span>
+              <span class="text-secondary tabular-nums"><%= milestone_when(milestone) %></span>
+            </li>
+          <% end %>
+        </ul>
+        <% if milestones.any? { |m| m.key == "coast" } %>
+          <p class="text-xs text-subdued mt-2"><%= t("retirement_plans.planner.milestones.coast_hint", year: plan.retirement_date.year) %></p>
+        <% end %>
+      </div>
+    <% end %>
+
     <% if rows.any? %>
       <%# The multi-line chart has no tooltip, so the legend names the lines,
           as on the portfolio comparison. The dot carries text-primary because
@@ -63,7 +82,12 @@
             <% rows.each do |row| %>
               <tr class="border-b border-divider <%= "bg-surface-inset" if simulation.depletion_year == row.year %>"
                   data-year="<%= row.year %>" <%= "data-retired" if retired?(row) %>>
-                <td class="py-1.5 px-2 text-primary"><%= row.year %></td>
+                <td class="py-1.5 px-2 text-primary">
+                  <%= row.year %>
+                  <% milestones_in(row.year).each do |milestone| %>
+                    <span class="text-xs text-secondary ml-1" data-row-milestone="<%= milestone.key %>"><%= milestone_name(milestone) %></span>
+                  <% end %>
+                </td>
                 <td class="py-1.5 px-2 text-secondary"><%= row.age %></td>
                 <td class="py-1.5 px-2 text-right text-secondary"><%= money(row.contribution) %></td>
                 <td class="py-1.5 px-2 text-right text-secondary"><%= money(row.withdrawal) %></td>

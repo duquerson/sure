@@ -14,6 +14,7 @@ class RetirementPlansController < ApplicationController
       @simulation = @retirement_plan.simulation(as_of: @as_of)
     end
 
+    @milestones = @simulation ? @retirement_plan.milestones(as_of: @as_of, simulation: @simulation) : []
     load_monte_carlo
   end
 
