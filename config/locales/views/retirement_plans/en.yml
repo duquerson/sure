@@ -21,6 +21,9 @@ en:
       end_age: Plan to age
       inflation_rate: Inflation (%)
       returns_hint: The expected return is your yearly compound return before inflation. Figures are before tax.
+      return_volatility: Return volatility (%)
+      return_volatility_hint: How far a year's return typically strays from the expected one. 12% is roughly a balanced portfolio; shares alone vary more.
+      success_target: Confidence target (%)
     update:
       success: Financial independence settings saved
     summary:
@@ -45,6 +48,7 @@ en:
         projected: Projected portfolio
         fi_number: Financial independence number
     show:
+      monte_carlo: Chance of success
       title: Retirement planner
       subtitle: Your portfolio year by year, to the age you plan to.
       settings: Settings
@@ -124,3 +128,18 @@ en:
         success: Saved
       destroy:
         success: Deleted
+    monte_carlo:
+      pending: Running 5,000 simulations of your plan. This takes a few seconds.
+      failed: The simulations could not be run for this plan. Changing a setting runs them again.
+      success_rate: Chance the money lasts
+      success_rate_hint: "Share of %{paths} simulated markets in which the money lasts to the end of the plan, retiring in %{year}."
+      stress: If the worst years come first
+      stress_hint: The same returns, with each simulation's worst years at the start of retirement.
+      confident_year: "Earliest retirement at %{target} confidence"
+      at_age: "at %{age}"
+      no_confident_year: "No retirement year reaches the target before %{end_age}."
+      fan: Portfolio in today's money, from the 10th to the 90th percentile
+      percentile: "%{p}th percentile"
+      heatmap: Chance of success by expected return (rows) and savings rate (columns)
+      heatmap_axes: Return / savings
+      assumptions: "Yearly returns vary around the expected return with %{volatility} volatility, independently each year. Before tax."

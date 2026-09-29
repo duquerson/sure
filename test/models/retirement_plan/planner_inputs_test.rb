@@ -90,6 +90,22 @@ class RetirementPlan::PlannerInputsTest < ActiveSupport::TestCase
     assert_equal 0, @plan.streams.count
   end
 
+  # Two requests that each loaded the plan before either seeded (CodeRabbit on
+  # #251): the second must see the first's marker, not its own stale copy.
+  test "two copies of a plan loaded before either seeds do not both seed" do
+    checking = own_account(amount: 1_000)
+    create_transaction(account: checking, date: Date.new(2026, 2, 10), amount: 1_000)
+    first = RetirementPlan.find(@plan.id)
+    second = RetirementPlan.find(@plan.id)
+
+    first.seed_streams!(as_of: AS_OF)
+    assert_nil second.streams_seeded_on, "the second copy must be stale for this to prove anything"
+
+    assert_no_difference "RetirementPlan::Stream.count" do
+      second.seed_streams!(as_of: AS_OF)
+    end
+  end
+
   # --- Funding accounts -----------------------------------------------------
 
   test "linked accounts replace the default set of accounts" do

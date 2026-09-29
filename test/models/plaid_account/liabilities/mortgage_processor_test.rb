@@ -193,8 +193,11 @@ class PlaidAccount::Liabilities::MortgageProcessorTest < ActiveSupport::TestCase
   # the rejected figure to Plaid. `find_or_create_by` reuses the row an earlier
   # accepted write made, so a row count cannot see this -- only the stored
   # `value` can.
+  #
+  # A FIXED loan, because that is where a reported rate is still written as the
+  # base rate; a variable loan's rate is a dated row since #223.
   test "a refused rate leaves the previously accepted provenance value in place" do
-    loan = loan_with(interest_rate: 4.5, rate_type: "variable")
+    loan = loan_with(interest_rate: 4.5, rate_type: "fixed")
     writer = PlaidAccount::Liabilities::MortgageProcessor.new(@plaid_account.reload)
 
     writer.send(:write_loan_terms, interest_rate: 5.2)
@@ -205,6 +208,119 @@ class PlaidAccount::Liabilities::MortgageProcessorTest < ActiveSupport::TestCase
 
     assert_equal 5.2, enrichment.reload.value.to_f, "the refused rate was recorded as Plaid's value"
     assert_equal 5.2, loan.reload.interest_rate.to_f
+  end
+
+  # #223. A variable loan's rate change is a dated row, not a new base rate:
+  # overwriting the base rate re-prices every period before the change.
+  test "a variable mortgage's rate change is dated, not overwritten" do
+    loan = loan_with(interest_rate: 4.5, rate_type: "variable")
+    payload(type: "variable", percentage: 5.2)
+
+    process_as_of(Date.new(2026, 1, 15))
+
+    loan.reload
+    assert_equal 4.5, loan.interest_rate.to_f, "the base rate was overwritten"
+    assert_equal({ "2026-01-15" => 5.2 }, loan.variable_rate_schedule)
+  end
+
+  test "the dated row is keyed to the sync's date, not the clock" do
+    loan = loan_with(interest_rate: 4.5, rate_type: "variable")
+    payload(type: "variable", percentage: 5.2)
+
+    travel_to Date.new(2026, 3, 1) do
+      process_as_of(Date.new(2026, 1, 15))
+    end
+
+    assert_equal [ "2026-01-15" ], loan.reload.variable_rate_schedule.keys
+  end
+
+  test "the same variable rate on the next sync adds no second row" do
+    loan = loan_with(interest_rate: 4.5, rate_type: "variable")
+    payload(type: "variable", percentage: 5.2)
+    process_as_of(Date.new(2026, 1, 15))
+
+    process_as_of(Date.new(2026, 1, 16))
+
+    assert_equal({ "2026-01-15" => 5.2 }, loan.reload.variable_rate_schedule)
+  end
+
+  test "a payload that turns a fixed loan variable dates the rate change" do
+    loan = loan_with(interest_rate: 4.5, rate_type: "fixed")
+    payload(type: "variable", percentage: 5.2)
+
+    process_as_of(Date.new(2026, 1, 15))
+
+    loan.reload
+    assert_equal "variable", loan.rate_type
+    assert_equal 4.5, loan.interest_rate.to_f
+    assert_equal({ "2026-01-15" => 5.2 }, loan.variable_rate_schedule)
+  end
+
+  test "a fixed mortgage's rate is still written as the base rate" do
+    loan = loan_with(interest_rate: 4.5, rate_type: "fixed")
+    payload(type: "fixed", percentage: 5.2)
+
+    process_as_of(Date.new(2026, 1, 15))
+
+    loan.reload
+    assert_equal 5.2, loan.interest_rate.to_f
+    assert loan.variable_rate_schedule.blank?, "a fixed loan grew a schedule"
+  end
+
+  test "a locked schedule is not written" do
+    loan = loan_with(interest_rate: 4.5, rate_type: "variable")
+    loan.lock_attr!(:variable_rate_schedule)
+    payload(type: "variable", percentage: 5.2)
+
+    process_as_of(Date.new(2026, 1, 15))
+
+    loan.reload
+    assert loan.variable_rate_schedule.blank?
+    assert_equal 4.5, loan.interest_rate.to_f
+  end
+
+  # CodeRabbit on #247: the variable path is two saves, the terms and then the
+  # dated rate. Before #223 they were one save, so a refused rate took the
+  # terms back with it; split, a reclassification to variable could land while
+  # the rate that came with it was refused.
+  test "a move to variable whose rate row is refused changes nothing" do
+    loan = loan_with(interest_rate: 4.5, rate_type: "fixed")
+    writer = PlaidAccount::Liabilities::MortgageProcessor.new(@plaid_account.reload, as_of: Date.new(2026, 1, 15))
+
+    assert_difference "DebugLogEntry.count", 1, "the refusal must still be reported" do
+      writer.send(:write_loan_terms, rate_type: "variable", interest_rate: 150)
+    end
+
+    assert_equal "fixed", writer.send(:account).loan.rate_type,
+                 "the rolled-back reclassification is still on the writer's loan in memory"
+    loan.reload
+    assert_equal "fixed", loan.rate_type, "the reclassification landed without its rate"
+    assert_equal 4.5, loan.interest_rate.to_f
+    assert loan.variable_rate_schedule.blank?
+    assert_not DataEnrichment.exists?(enrichable: loan, attribute_name: "rate_type", source: "plaid")
+  end
+
+  test "an error between the terms and the rate leaves the terms unwritten" do
+    loan = loan_with(interest_rate: 4.5, rate_type: "fixed")
+    writer = PlaidAccount::Liabilities::MortgageProcessor.new(@plaid_account.reload, as_of: Date.new(2026, 1, 15))
+    Loan.any_instance.stubs(:variable_rate_update_for).raises(ActiveRecord::StatementInvalid, "interrupted")
+
+    assert_raises(ActiveRecord::StatementInvalid) do
+      writer.send(:write_loan_terms, rate_type: "variable", interest_rate: 5.2)
+    end
+
+    assert_equal "fixed", loan.reload.rate_type
+  end
+
+  test "a move to variable with an acceptable rate still lands both" do
+    loan = loan_with(interest_rate: 4.5, rate_type: "fixed")
+    writer = PlaidAccount::Liabilities::MortgageProcessor.new(@plaid_account.reload, as_of: Date.new(2026, 1, 15))
+
+    writer.send(:write_loan_terms, rate_type: "variable", interest_rate: 5.2)
+
+    loan.reload
+    assert_equal "variable", loan.rate_type
+    assert_equal({ "2026-01-15" => 5.2 }, loan.variable_rate_schedule)
   end
 
   private
@@ -220,5 +336,9 @@ class PlaidAccount::Liabilities::MortgageProcessorTest < ActiveSupport::TestCase
 
     def process
       PlaidAccount::Liabilities::MortgageProcessor.new(@plaid_account.reload).process
+    end
+
+    def process_as_of(date)
+      PlaidAccount::Liabilities::MortgageProcessor.new(@plaid_account.reload, as_of: date).process
     end
 end

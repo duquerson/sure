@@ -18,6 +18,19 @@
     ) %>
   <% end %>
 
+  <% if @monte_carlo_available %>
+    <%= turbo_stream_from Current.user, :retirement_plan %>
+    <%= render DS::Card.new do %>
+      <h2 class="text-sm font-medium text-primary mb-3"><%= t(".monte_carlo") %></h2>
+      <%# The run can finish before the stream above subscribes, and a missed
+          broadcast is not replayed, so while pending the section also polls. %>
+      <%= turbo_frame_tag "retirement-plan-monte-carlo-frame",
+            data: @monte_carlo.nil? && !@monte_carlo_failed ? { controller: "polling", polling_url_value: retirement_plan_path, polling_interval_value: 5000 } : {} do %>
+        <%= render "retirement_plans/monte_carlo", plan: @retirement_plan, result: @monte_carlo, key: @monte_carlo_key, failed: @monte_carlo_failed %>
+      <% end %>
+    <% end %>
+  <% end %>
+
   <%= render DS::Card.new do %>
     <div class="flex items-center justify-between gap-2 mb-3">
       <h2 class="text-sm font-medium text-primary"><%= t(".streams") %></h2>

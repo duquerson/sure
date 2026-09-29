@@ -57,8 +57,33 @@ class Holding::PortfolioCache
     @security_cache.map { |_, v| v[:security] }
   end
 
+  # The ratio of the split a security goes ex on this date, or nil when it
+  # has none. Nil, not 1, so a caller can leave an unsplit position untouched.
+  def get_split_ratio(security_id, date)
+    split_ratios[[ security_id, date ]]
+  end
+
+  # Every split within the account's history, oldest first.
+  def get_splits
+    splits
+  end
+
   private
     PriceWithPriority = Data.define(:price, :priority, :source)
+
+    # Only splits the holdings can see: from the account's start date, when
+    # its holdings begin, to today. A split announced for a future ex-date is
+    # not applied early; it takes effect when that date arrives.
+    def splits
+      @splits ||= Security::Split
+        .where(security_id: @security_cache.keys, ex_date: account.start_date..Date.current)
+        .order(:ex_date)
+        .to_a
+    end
+
+    def split_ratios
+      @split_ratios ||= splits.to_h { |split| [ [ split.security_id, split.ex_date ], split.ratio ] }
+    end
 
     def trades
       @trades ||= account.entries.includes(entryable: :security).trades.chronological.to_a

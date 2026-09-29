@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_09_28_120000) do
+ActiveRecord::Schema[8.1].define(version: 2026_09_28_140000) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_catalog.plpgsql"
   enable_extension "pgcrypto"
@@ -2353,9 +2353,11 @@ ActiveRecord::Schema[8.1].define(version: 2026_09_28_120000) do
     t.decimal "inflation_rate", precision: 6, scale: 4, default: "0.03", null: false
     t.string "mode", default: "traditional", null: false
     t.date "retirement_date"
+    t.decimal "return_volatility", precision: 5, scale: 4, default: "0.12", null: false
     t.decimal "safe_withdrawal_rate", precision: 5, scale: 4, default: "0.04", null: false
     t.decimal "savings_rate", precision: 5, scale: 4
     t.date "streams_seeded_on"
+    t.decimal "success_target", precision: 5, scale: 4, default: "0.9", null: false
     t.datetime "updated_at", null: false
     t.uuid "user_id", null: false
     t.index ["user_id"], name: "index_retirement_plans_on_user_id", unique: true
@@ -2364,8 +2366,10 @@ ActiveRecord::Schema[8.1].define(version: 2026_09_28_120000) do
     t.check_constraint "expected_annual_return > '-1'::integer::numeric AND expected_annual_return <= 1::numeric", name: "chk_retirement_plans_expected_annual_return"
     t.check_constraint "inflation_rate > '-1'::integer::numeric AND inflation_rate <= 1::numeric", name: "chk_retirement_plans_inflation_rate"
     t.check_constraint "mode::text = ANY (ARRAY['traditional'::character varying, 'fire'::character varying]::text[])", name: "chk_retirement_plans_mode"
+    t.check_constraint "return_volatility >= 0::numeric AND return_volatility <= 1::numeric", name: "chk_retirement_plans_return_volatility"
     t.check_constraint "safe_withdrawal_rate > 0::numeric AND safe_withdrawal_rate <= 1::numeric", name: "chk_retirement_plans_safe_withdrawal_rate"
     t.check_constraint "savings_rate IS NULL OR savings_rate >= 0::numeric AND savings_rate <= 1::numeric", name: "chk_retirement_plans_savings_rate"
+    t.check_constraint "success_target > 0::numeric AND success_target <= 1::numeric", name: "chk_retirement_plans_success_target"
   end
 
   create_table "rule_actions", id: :uuid, default: -> { "gen_random_uuid()" }, force: :cascade do |t|
@@ -2495,6 +2499,20 @@ ActiveRecord::Schema[8.1].define(version: 2026_09_28_120000) do
     t.datetime "updated_at", null: false
     t.index ["security_id", "date", "currency"], name: "index_security_prices_on_security_id_and_date_and_currency", unique: true
     t.index ["security_id"], name: "index_security_prices_on_security_id"
+  end
+
+  create_table "security_splits", id: :uuid, default: -> { "gen_random_uuid()" }, force: :cascade do |t|
+    t.datetime "created_at", null: false
+    t.integer "denominator", null: false
+    t.date "ex_date", null: false
+    t.integer "numerator", null: false
+    t.uuid "security_id", null: false
+    t.string "source", null: false
+    t.datetime "updated_at", null: false
+    t.index ["security_id", "ex_date"], name: "index_security_splits_on_security_id_and_ex_date", unique: true
+    t.index ["security_id"], name: "index_security_splits_on_security_id"
+    t.check_constraint "numerator <> denominator", name: "security_splits_not_one_to_one"
+    t.check_constraint "numerator > 0 AND denominator > 0", name: "security_splits_positive_terms"
   end
 
   create_table "sessions", id: :uuid, default: -> { "gen_random_uuid()" }, force: :cascade do |t|
@@ -3252,6 +3270,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_09_28_120000) do
   add_foreign_key "security_classification_proposals", "securities"
   add_foreign_key "security_constituents", "securities"
   add_foreign_key "security_prices", "securities"
+  add_foreign_key "security_splits", "securities", on_delete: :cascade
   add_foreign_key "sessions", "impersonation_sessions", column: "active_impersonator_session_id", on_delete: :nullify
   add_foreign_key "sessions", "users"
   add_foreign_key "simplefin_accounts", "simplefin_items"

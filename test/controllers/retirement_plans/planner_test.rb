@@ -80,10 +80,35 @@ class RetirementPlans::PlannerTest < ActionDispatch::IntegrationTest
     end
   end
 
+  # The settings and the first seeding commit together (CodeRabbit on #251), so
+  # a failure part-way leaves no plan whose streams were never seeded.
+  test "a failure while seeding leaves the settings unsaved too" do
+    RetirementPlan.create!(user: @user, end_age: 90)
+    RetirementPlan.any_instance.stubs(:seed_living_costs).raises(RuntimeError, "seeding failed")
+
+    assert_raises(RuntimeError) do
+      patch retirement_plan_url, params: { retirement_plan: { birth_year: "1980", end_age: "85" } }
+    end
+
+    plan = RetirementPlan.find_by!(user: @user)
+    assert_equal [ nil, 90, nil ], [ plan.birth_year, plan.end_age, plan.streams_seeded_on ]
+  end
+
   test "an end age outside 50 to 120 is refused" do
     patch retirement_plan_url, params: { retirement_plan: { end_age: "30" } }
 
     assert_response :unprocessable_entity
+  end
+
+  # A plan already seeded skips seeding, so only the rollback stands between an
+  # invalid change and a redirect.
+  test "an invalid change to a seeded plan is refused and not saved" do
+    RetirementPlan.create!(user: @user, end_age: 90, streams_seeded_on: Date.current)
+
+    patch retirement_plan_url, params: { retirement_plan: { end_age: "30", birth_year: "1980" } }
+
+    assert_response :unprocessable_entity
+    assert_equal [ 90, nil ], RetirementPlan.find_by!(user: @user).then { |p| [ p.end_age, p.birth_year ] }
   end
 
   test "a stream is added to the signed-in user's own plan" do
@@ -97,8 +122,12 @@ class RetirementPlans::PlannerTest < ActionDispatch::IntegrationTest
     assert_equal [ "income", BigDecimal("11000"), 2047, "manual" ], [ stream.kind, stream.annual_amount, stream.start_year, stream.source ]
   end
 
+  # A user with no saved plan yet: the plan the stream would belong to is not
+  # created either (CodeRabbit on #251).
   test "an invalid stream is refused and nothing is written" do
-    assert_no_difference "RetirementPlan::Stream.count" do
+    assert_not RetirementPlan.exists?(user: @user), "the user must start without a plan"
+
+    assert_no_difference [ "RetirementPlan::Stream.count", "RetirementPlan.count" ] do
       post retirement_plan_streams_url, params: { retirement_plan_stream: { kind: "expense", name: "", annual_amount: "0" } }
     end
 
