@@ -565,7 +565,17 @@ class Loan
         # rather than Simulator's "payment schedule must not be empty".
         raise ArgumentError, "no payments remain to the original maturity" unless periods.positive?
 
-        @projected_payment_dates = Array.new(periods) { |index| first_date >> index }
+        # Stepped from the previous date, not offset from the first, because
+        # that is what the contracted schedule does (C5) and the two calendars
+        # have to be the same calendar. `Date#next_month` clamps and never
+        # recovers -- 29 Jan -> 28 Feb -> 28 Mar -- while `>>` recovers the
+        # anchor day, so from the first February onwards the two disagreed on
+        # 334 of a 360-month schedule. Accrual is daily, so every one of those
+        # shifted period boundaries moved interest.
+        date = first_date
+        @projected_payment_dates = Array.new(periods) do |index|
+          index.zero? ? date : (date = date.next_month)
+        end
       end
 
       # Payments left to the ORIGINAL maturity, counted from the first date this
