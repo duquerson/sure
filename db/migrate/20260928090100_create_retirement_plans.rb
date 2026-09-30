@@ -3,7 +3,10 @@ class CreateRetirementPlans < ActiveRecord::Migration[8.1]
     # One plan per user, not per family. The figures a plan drives are built
     # from the accounts its user can see, so a shared plan would project a
     # different set of accounts for every member who opened it.
-    create_table :retirement_plans, id: :uuid, default: -> { "gen_random_uuid()" } do |t|
+    # Renumbered from 20260928090000, which upstream's Trade Republic label
+    # normalisation also uses. A database that ran this migration under the
+    # old number already has the table, so every step is a no-op there.
+    create_table :retirement_plans, id: :uuid, default: -> { "gen_random_uuid()" }, if_not_exists: true do |t|
       t.references :user, null: false, type: :uuid, index: { unique: true }, foreign_key: { on_delete: :cascade }
 
       t.decimal :safe_withdrawal_rate, precision: 5, scale: 4, null: false, default: "0.04"
@@ -20,15 +23,15 @@ class CreateRetirementPlans < ActiveRecord::Migration[8.1]
     # the whole portfolio each year.
     add_check_constraint :retirement_plans,
       "safe_withdrawal_rate > 0 AND safe_withdrawal_rate <= 1",
-      name: "chk_retirement_plans_safe_withdrawal_rate"
+      name: "chk_retirement_plans_safe_withdrawal_rate", if_not_exists: true
 
     # A return of -100% or worse leaves nothing to compound.
     add_check_constraint :retirement_plans,
       "expected_annual_return > -1 AND expected_annual_return <= 1",
-      name: "chk_retirement_plans_expected_annual_return"
+      name: "chk_retirement_plans_expected_annual_return", if_not_exists: true
 
     add_check_constraint :retirement_plans,
       "savings_rate IS NULL OR (savings_rate >= 0 AND savings_rate <= 1)",
-      name: "chk_retirement_plans_savings_rate"
+      name: "chk_retirement_plans_savings_rate", if_not_exists: true
   end
 end
