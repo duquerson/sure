@@ -14,19 +14,19 @@
       a stale ?start_date/&end_date from a chart drag-select would outlive a
       preset pick and come back on refresh. See `turbo_action_for` for why the
       checked row replaces rather than advances. %>
-  <% items.each do |key, label| %>
-    <% item_selected = selected?(key) %>
+  <% periods.each do |period| %>
+    <% period_selected = selected?(period.key) %>
     <% menu.with_item(
          variant: :link,
-         text: label,
-         href: href_for(key),
+         text: period.label_short,
+         href: href_for(period.key),
          frame: frame,
-         selected: item_selected,
-         data: { turbo_action: turbo_action_for(item_selected) }
+         selected: period_selected,
+         data: { turbo_action: turbo_action_for(period_selected) }
        ) %>
   <% end %>
 
-  <% if custom_row? %>
+  <% if custom_selected? %>
     <%# Last, so the presets keep their positions. Without this row a custom
         range leaves the list with nothing checked, which reads as "no selection"
         and hides the fact that picking a preset is how you leave it. %>

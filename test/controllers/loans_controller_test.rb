@@ -286,23 +286,4 @@ class LoansControllerTest < ActionDispatch::IntegrationTest
         "a #{rate_type} loan must keep the offset accounts submitted with it"
     end
   end
-
-  private
-    # The payment cells of the Schedule tab's table, the only table on the page.
-    def schedule_table_cells
-      css_select("table tbody td").map { |cell| cell.text.strip }
-    end
-
-    # The fixture loan starts today with no opening valuation. Drawn down two
-    # years ago, it has payments behind it; with the valuation the account form
-    # records, its principal stays the amount borrowed when a test then moves
-    # the balance -- without one the schedule would amortise the new balance.
-    def draw_down_loan_two_years_ago
-      start_date = Date.current - 2.years
-      @account.loan.update!(start_date: start_date)
-      @account.entries.create!(
-        date: start_date, name: "Opening balance", amount: @account.balance, currency: @account.currency,
-        entryable: Valuation.new(kind: "opening_anchor")
-      )
-    end
 end
