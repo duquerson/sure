@@ -1805,19 +1805,253 @@ class InvestmentStatementTest < ActiveSupport::TestCase
     end
   end
 
-  # The drill-down reads the fund's own columns while the parent rows under
-  # look-through come from the constituents, so the two contradict each other.
-  # Held at the model rather than only through the view, because the view is
-  # what forgot to pass the flag in the first place (CodeRabbit, #201).
-  test "no grouping offers a child level while look-through is on" do
+  # #201 shipped this level FLAT, because the parents came from the constituents
+  # while the children read the fund's own columns and the two contradicted each
+  # other. #217 settled the product question -- show the constituents -- so both
+  # levels now slice `look_through_rows` and the ladder opens again.
+  #
+  # This test asserted `assert_empty` until #217. It was right for the interim
+  # state and is wrong for the decided one, so it is rewritten rather than
+  # deleted: the guarantee it protects is not "no children" but "the children
+  # belong to the parent above them".
+  test "a looked-through asset class opens onto its constituents' sub-classes" do
     account = create_investment_account(balance: 1000, cash_balance: 0)
-    security = create_classified_security(asset_class: "equity", asset_sub_class: "stock")
-    Holding.create!(account: account, security: security, date: Date.current, qty: 1, price: 1000, amount: 1000, currency: "USD")
+    create_classified_security(ticker: "SHR9", asset_class: "equity", asset_sub_class: "stock")
+    create_classified_security(ticker: "BND9", asset_class: "fixed_income", asset_sub_class: "bond")
+    fund = create_classified_security(ticker: "MIX9", asset_class: "equity", asset_sub_class: "etf")
+    fund.constituents.create!(ticker: "SHR9", name: "A share", weight: 60)
+    fund.constituents.create!(ticker: "BND9", name: "A bond", weight: 40)
+    Holding.create!(account: account, security: fund, date: Date.current, qty: 1, price: 1000, amount: 1000, currency: "USD")
 
-    assert_not_empty @statement.allocation_children("asset_class", "equity"),
-                     "the ladder stopped opening without look-through, so the assertion below proves nothing"
-    assert_empty @statement.allocation_children("asset_class", "equity", look_through: true),
-                 "a looked-through asset class opened onto the holding's own sub-class"
+    equity = @statement.allocation_children("asset_class", "equity", look_through: true).index_by(&:id)
+    fixed = @statement.allocation_children("asset_class", "fixed_income", look_through: true).index_by(&:id)
+
+    assert_equal [ "stock" ], equity.keys, "the equity portion opened onto the fund's own sub-class"
+    assert_equal 600, equity["stock"].amount.amount.to_i
+    assert_equal [ "bond" ], fixed.keys, "the bond portion had no children of its own"
+    assert_equal 400, fixed["bond"].amount.amount.to_i
+  end
+
+  # The bottom of the ladder, which is the level look-through exists for: the
+  # sub-class opens onto the CONSTITUENTS, named from the constituent row.
+  test "a looked-through sub-class opens onto the constituents themselves" do
+    account = create_investment_account(balance: 1000, cash_balance: 0)
+    share = create_classified_security(ticker: "SHR8", asset_class: "equity", asset_sub_class: "stock")
+    fund = create_classified_security(ticker: "MIX8", asset_class: "equity", asset_sub_class: "etf")
+    fund.constituents.create!(ticker: "SHR8", name: "A share", weight: 100)
+    Holding.create!(account: account, security: fund, date: Date.current, qty: 1, price: 1000, amount: 1000, currency: "USD")
+
+    rows = @statement.allocation_children("asset_sub_class", "stock", look_through: true)
+
+    # Keyed on the security the constituent RESOLVED to, not on its ticker, so
+    # it can merge with the same security held directly. The label still comes
+    # from the constituent row.
+    assert_equal [ share.id ], rows.map(&:id), "the bottom row was the fund, not what it holds"
+    assert_equal "A share", rows.first.name, "the row was not named from the constituent"
+    assert_equal 1000, rows.first.amount.amount.to_i
+  end
+
+  # One exposure is one row however it is reached. Holding a share directly AND
+  # inside a fund used to render it twice -- the direct row keyed on
+  # `security_id`, the constituent row on its ticker -- which is the one case
+  # none of the tests above covered, and it made the bottom level overstate the
+  # number of positions while each row understated the exposure.
+  test "a security held directly and through a fund is one row, not two" do
+    account = create_investment_account(balance: 1000, cash_balance: 0)
+    share = create_classified_security(ticker: "SHR9", asset_class: "equity", asset_sub_class: "stock")
+    fund = create_classified_security(ticker: "MIX9", asset_class: "equity", asset_sub_class: "etf")
+    fund.constituents.create!(ticker: "SHR9", name: "A share", weight: 100)
+    Holding.create!(account: account, security: share, date: Date.current, qty: 1, price: 400, amount: 400, currency: "USD")
+    Holding.create!(account: account, security: fund, date: Date.current, qty: 1, price: 600, amount: 600, currency: "USD")
+
+    rows = @statement.allocation_children("asset_sub_class", "stock", look_through: true)
+
+    assert_equal [ share.id ], rows.map(&:id), "the same exposure rendered as two rows"
+    assert_equal 1000, rows.first.amount.amount.to_i,
+                 "400 held directly plus 600 through the fund is one 1,000 exposure"
+    assert_equal share.name.presence || share.ticker, rows.first.name,
+                 "a position held directly is named by its own security, not by a fund's label for it"
+  end
+
+  # A directly held position must not vanish when the toggle goes on.
+  test "a non-fund holding still appears in the looked-through ladder" do
+    account = create_investment_account(balance: 1000, cash_balance: 0)
+    direct = create_classified_security(ticker: "DIR1", asset_class: "equity", asset_sub_class: "stock")
+    Holding.create!(account: account, security: direct, date: Date.current, qty: 1, price: 1000, amount: 1000, currency: "USD")
+
+    rows = @statement.allocation_children("asset_sub_class", "stock", look_through: true)
+
+    assert_equal [ direct.id ], rows.map(&:id), "a directly held position was dropped by look-through"
+    assert_equal 1000, rows.first.amount.amount.to_i
+  end
+
+  # A fund whose constituent weights sum to zero has no usable split, so
+  # `constituent_weights_for` returns nothing and the fund falls back to ONE row
+  # for itself, from its own columns -- at the bottom level as well as above it.
+  # The rows are present, so this is not the "no constituents" path the non-fund
+  # test above already covers.
+  test "a fund whose constituent weights sum to zero is its own bottom row" do
+    account = create_investment_account(balance: 1000, cash_balance: 0)
+    create_classified_security(ticker: "ZSH1", asset_class: "equity", asset_sub_class: "stock")
+    fund = create_classified_security(ticker: "ZFND1", asset_class: "equity", asset_sub_class: "etf")
+    fund.constituents.create!(ticker: "ZSH1", name: "A share", weight: 0)
+    Holding.create!(account: account, security: fund, date: Date.current, qty: 1, price: 1000, amount: 1000, currency: "USD")
+
+    stock = @statement.allocation_children("asset_sub_class", "stock", look_through: true, parent: "equity")
+    etf = @statement.allocation_children("asset_sub_class", "etf", look_through: true, parent: "equity")
+
+    assert_empty stock, "a zero-weight constituent was given a share of the fund"
+    assert_equal [ fund.id ], etf.map(&:id), "the fund did not fall back to a row for itself"
+    assert_equal 1000, etf.first.amount.amount.to_i
+  end
+
+  # A provider's list rarely sums to exactly 100 (a "top holdings" feed can stop
+  # at 80). The weights are normalised against their actual sum -- see
+  # `Security::Constituent` -- so the listed constituents carry the whole fund
+  # between them and nothing is left over. Pinned at the bottom level because
+  # that is where the scaled values are now printed by name; presenting the
+  # unlisted remainder differently is an open product question, and this test
+  # is what would change with it.
+  test "an incomplete constituent list is scaled to the whole fund at the bottom level" do
+    account = create_investment_account(balance: 1000, cash_balance: 0)
+    first = create_classified_security(ticker: "PSH1", asset_class: "equity", asset_sub_class: "stock")
+    second = create_classified_security(ticker: "PSH2", asset_class: "equity", asset_sub_class: "stock")
+    fund = create_classified_security(ticker: "PFND1", asset_class: "equity", asset_sub_class: "etf")
+    fund.constituents.create!(ticker: "PSH1", name: "First share", weight: 50)
+    fund.constituents.create!(ticker: "PSH2", name: "Second share", weight: 30)
+    Holding.create!(account: account, security: fund, date: Date.current, qty: 1, price: 1000, amount: 1000, currency: "USD")
+
+    rows = @statement.allocation_children("asset_sub_class", "stock", look_through: true, parent: "equity")
+      .index_by(&:id)
+
+    assert_equal 625, rows[first.id].amount.amount.to_i, "50 of a listed 80 is 62.5% of the fund"
+    assert_equal 375, rows[second.id].amount.amount.to_i, "30 of a listed 80 is 37.5% of the fund"
+    assert_equal 1000, rows.values.sum { |r| r.amount.amount }.to_i,
+                 "the listed constituents did not account for the whole fund"
+  end
+
+  # A sub-class NAME is not unique across asset classes -- `unclassified` is
+  # reachable from every one of them -- so the bottom level has to be told which
+  # branch it hangs from. Without it, opening equity's `unclassified` also lists
+  # fixed income's, and the level reports more money than the child above it.
+  test "an unclassified sub-class opens onto its own asset class only" do
+    account = create_investment_account(balance: 1000, cash_balance: 0)
+    # asset_class set, asset_sub_class left blank -> UNCLASSIFIED in both classes.
+    share = create_classified_security(ticker: "UEQ1", asset_class: "equity")
+    bond = create_classified_security(ticker: "UFI1", asset_class: "fixed_income")
+    Holding.create!(account: account, security: share, date: Date.current, qty: 1, price: 600, amount: 600, currency: "USD")
+    Holding.create!(account: account, security: bond, date: Date.current, qty: 1, price: 400, amount: 400, currency: "USD")
+
+    [ false, true ].each do |look_through|
+      rows = @statement.allocation_children(
+        "asset_sub_class", InvestmentStatement::UNCLASSIFIED,
+        look_through: look_through, parent: "equity"
+      )
+
+      assert_equal [ share.id ], rows.map(&:id),
+                   "look_through=#{look_through}: fixed income's unclassified position leaked into equity's"
+      assert_equal 600, rows.sum { |r| r.amount.amount }.to_i,
+                   "look_through=#{look_through}: the bottom level reported more than its parent holds"
+    end
+  end
+
+  # `build_segments` drops a non-positive ROW, which is right for a row but
+  # makes the levels disagree: a sub-class holding +1,000 and -500 nets to 500
+  # one level up, while the bottom level -- where they are two rows -- drops the
+  # negative and reports 1,000. A negative amount is corrupt data (upsert_all
+  # bypasses Holding's validations), so it is excluded before anything sums.
+  test "a corrupt negative holding is excluded at every level, not just the bottom" do
+    account = create_investment_account(balance: 1000, cash_balance: 0)
+    good = create_classified_security(ticker: "POS1", asset_class: "equity", asset_sub_class: "stock")
+    bad = create_classified_security(ticker: "NEG1", asset_class: "equity", asset_sub_class: "stock")
+    Holding.create!(account: account, security: good, date: Date.current, qty: 1, price: 1000, amount: 1000, currency: "USD")
+    corrupt = Holding.create!(account: account, security: bad, date: Date.current, qty: 1, price: 500, amount: 500, currency: "USD")
+    # Holding validates a non-negative amount, so reproduce the only way one
+    # lands in production: a write that skips validation.
+    corrupt.update_columns(amount: -500)
+
+    [ false, true ].each do |look_through|
+      # The TOP level too, not just the two below it. The first pass at this
+      # routed the child paths through the positive filter and left the segment
+      # builders on the unfiltered holdings, so the ladder still disagreed with
+      # itself -- one level up from where the test was looking (CodeRabbit).
+      top = @statement.allocation_by("asset_class", look_through: look_through)
+      equity = top.find { |r| r.id == "equity" }
+      parent = @statement.allocation_children("asset_class", "equity", look_through: look_through)
+      stock = parent.find { |r| r.id == "stock" }
+      bottom = @statement.allocation_children(
+        "asset_sub_class", "stock", look_through: look_through, parent: "equity"
+      )
+
+      assert_equal 1000, equity.amount.amount.to_i,
+                   "look_through=#{look_through}: the top-level segment netted the corrupt row in"
+      assert_equal 1000, stock.amount.amount.to_i,
+                   "look_through=#{look_through}: the negative row netted against the good one a level up"
+      assert_equal 1000, bottom.sum { |r| r.amount.amount }.to_i,
+                   "look_through=#{look_through}: the bottom level disagreed with its parent"
+      assert_equal [ good.id ], bottom.map(&:id),
+                   "look_through=#{look_through}: the corrupt position was still listed"
+    end
+  end
+
+  # The property #201's defect actually broke: a level accounts for all of the
+  # level above it.
+  test "looked-through children sum to their parent" do
+    account = create_investment_account(balance: 1000, cash_balance: 0)
+    create_classified_security(ticker: "SHR7", asset_class: "equity", asset_sub_class: "stock")
+    create_classified_security(ticker: "ETF7", asset_class: "equity", asset_sub_class: "etf")
+    fund = create_classified_security(ticker: "MIX7", asset_class: "equity", asset_sub_class: "etf")
+    fund.constituents.create!(ticker: "SHR7", name: "A share", weight: 70)
+    fund.constituents.create!(ticker: "ETF7", name: "A nested fund", weight: 30)
+    Holding.create!(account: account, security: fund, date: Date.current, qty: 1, price: 1000, amount: 1000, currency: "USD")
+
+    parent = @statement.allocation_by("asset_class", look_through: true).find { |s| s.id == "equity" }
+    children = @statement.allocation_children("asset_class", "equity", look_through: true)
+
+    assert_equal parent.amount.amount, children.sum { |c| c.amount.amount },
+                 "the sub-class level did not account for all of its parent"
+  end
+
+  # An ambiguous constituent (#214) has no resolved Security, so it is
+  # UNCLASSIFIED at both levels -- but it is still NAMED, because the label comes
+  # from the constituent row rather than from the listing we could not choose.
+  test "an ambiguous constituent is unclassified at both levels and still named" do
+    account = create_investment_account(balance: 1000, cash_balance: 0)
+    create_classified_security(ticker: "DUAL7", exchange_operating_mic: "XLON", asset_class: "equity")
+    create_classified_security(ticker: "DUAL7", exchange_operating_mic: "XNAS", asset_class: "fixed_income")
+    fund = create_classified_security(ticker: "AMB7", asset_class: "equity", asset_sub_class: "etf")
+    fund.constituents.create!(ticker: "DUAL7", name: "Dual listing", weight: 100)
+    Holding.create!(account: account, security: fund, date: Date.current, qty: 1, price: 1000, amount: 1000, currency: "USD")
+
+    children = @statement.allocation_children("asset_class", InvestmentStatement::UNCLASSIFIED, look_through: true)
+    rows = @statement.allocation_children("asset_sub_class", InvestmentStatement::UNCLASSIFIED, look_through: true)
+
+    assert_equal [ InvestmentStatement::UNCLASSIFIED ], children.map(&:id)
+    assert_equal 1000, children.first.amount.amount.to_i, "an ambiguous constituent lost its value"
+    assert_equal "Dual listing", rows.first.name,
+                 "the row fell back to the ticker instead of the constituent's own name"
+  end
+
+  # The design claim of #217 is that no ladder level costs a query: every level
+  # slices one memoised row set, built from reads the parent segments already
+  # paid for. Measured as ONE fund against THREE so the comparison isolates fund
+  # count rather than a dozen unrelated first-call costs.
+  test "opening the looked-through ladder does not add a query per fund" do
+    account = create_investment_account(balance: 5000, cash_balance: 0)
+    add_laddered_fund(account, 0)
+
+    one = capture_sql_queries { drill_whole_ladder(InvestmentStatement.new(@family)) }.size
+
+    add_laddered_fund(account, 1)
+    add_laddered_fund(account, 2)
+
+    statement = InvestmentStatement.new(@family)
+    three = capture_sql_queries { drill_whole_ladder(statement) }.size
+
+    assert_not_empty statement.allocation_children("asset_class", "equity", look_through: true),
+                     "the ladder returned nothing, so the query count means nothing"
+    assert_equal one, three,
+                 "tripling the funds changed the query count, so a level is deriving per fund"
   end
 
   # ---------------------------------------- #214 ambiguous constituent tickers
@@ -2007,6 +2241,25 @@ class InvestmentStatementTest < ActiveSupport::TestCase
       fund.constituents.create!(ticker: "COLL#{index}", name: "Collision #{index}", weight: 100)
       Holding.create!(account: account, security: fund, date: Date.current, qty: 1, price: 100, amount: 100, currency: "USD")
       fund
+    end
+
+    # A fund whose constituent sits in a different sub-class from the wrapper, so
+    # the ladder has something to open onto.
+    def add_laddered_fund(account, index)
+      create_classified_security(ticker: "LSHR#{index}", asset_class: "equity", asset_sub_class: "stock")
+      fund = create_classified_security(ticker: "LFND#{index}", asset_class: "equity", asset_sub_class: "etf")
+      fund.constituents.create!(ticker: "LSHR#{index}", name: "Share #{index}", weight: 100)
+      Holding.create!(account: account, security: fund, date: Date.current, qty: 1, price: 100, amount: 100, currency: "USD")
+      fund
+    end
+
+    # Walks every level the partial walks, so the measurement covers the whole
+    # ladder rather than one call into it.
+    def drill_whole_ladder(statement)
+      statement.allocation_by("asset_class", look_through: true).each do |segment|
+        children = statement.allocation_children("asset_class", segment.id, look_through: true)
+        children.each { |child| statement.allocation_children("asset_sub_class", child.id, look_through: true) }
+      end
     end
 
     def create_classified_security(**attrs)

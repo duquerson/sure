@@ -97,7 +97,11 @@
               <div class="pl-10 pr-4 pb-2 space-y-1 text-secondary">
                 <% children.each do |child| %>
                   <% child_by = allocation_child_grouping(active_by) %>
-                  <% grandchildren = statement.allocation_children(child_by, child.id, look_through: look_through) %>
+                  <%# `parent:` is what keeps the bottom level inside the branch
+                      it hangs from: a sub-class name repeats across asset
+                      classes, so without it `unclassified` under equity also
+                      lists fixed income's unclassified positions. %>
+                  <% grandchildren = statement.allocation_children(child_by, child.id, look_through: look_through, parent: segment.id) %>
                   <div data-portfolio-child="<%= child.id %>">
                     <div class="flex items-center gap-3 py-1">
                       <p class="truncate"><%= allocation_segment_name(child, child_by) %></p>
