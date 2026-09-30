@@ -68,7 +68,7 @@ jobs:
           ${marker}
           Fork \`main\` (\`${FORK_SHA}\`) is **${BEHIND} commit(s)** behind we-promise/sure \`main\` (\`${UPSTREAM_SHA}\`), as of $(date -u +%Y-%m-%d).
 
-          Run the weekly sync (#118, "Staying in sync"):
+          Run the weekly sync, per #118's "Staying in sync while building locally" section:
 
           \`\`\`
           bin/upstream-sync
