@@ -1,0 +1,140 @@
+name: "CodeQL Advanced"
+
+on:
+  push:
+    branches:
+      - main
+
+  pull_request:
+    branches:
+      - main
+
+  schedule:
+    - cron: "27 5 * * 1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: codeql-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: ${{ matrix.timeout }}
+
+    permissions:
+      security-events: write
+      packages: read
+      actions: read
+      contents: read
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - language: actions
+            build-mode: none
+            os: ubuntu-latest
+            timeout: 30
+
+          - language: javascript-typescript
+            build-mode: none
+            os: ubuntu-latest
+            timeout: 30
+
+          - language: ruby
+            build-mode: none
+            os: ubuntu-latest
+            timeout: 30
+
+          - language: rust
+            build-mode: none
+            os: ubuntu-latest
+            timeout: 30
+
+          - language: java-kotlin
+            build-mode: manual
+            os: ubuntu-latest
+            timeout: 45
+
+          - language: swift
+            build-mode: manual
+            os: macos-latest
+            timeout: 60
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      # Android uses Java 17 in the repository's existing mobile build.
+      - name: Set up Java
+        if: matrix.language == 'java-kotlin'
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+
+      # Both Android and iOS are Flutter applications.
+      - name: Set up Flutter
+        if: matrix.language == 'java-kotlin' || matrix.language == 'swift'
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: "3.32.4"
+          channel: stable
+          cache: true
+
+      - name: Install Flutter dependencies
+        if: matrix.language == 'java-kotlin' || matrix.language == 'swift'
+        working-directory: mobile
+        run: flutter pub get
+
+      - name: Copy application icon
+        if: matrix.language == 'java-kotlin' || matrix.language == 'swift'
+        run: |
+          cp public/android-chrome-512x512.png \
+             mobile/assets/icon/app_icon.png
+
+      - name: Generate application icons
+        if: matrix.language == 'java-kotlin' || matrix.language == 'swift'
+        working-directory: mobile
+        run: flutter pub run flutter_launcher_icons
+
+      - name: Install CocoaPods dependencies
+        if: matrix.language == 'swift'
+        working-directory: mobile/ios
+        run: pod install
+
+      - name: Initialise CodeQL
+        uses: github/codeql-action/init@v4
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+
+      # This build executes after CodeQL initialisation so CodeQL can trace
+      # the Java and Kotlin compiler processes.
+      - name: Build Android for CodeQL
+        if: matrix.language == 'java-kotlin'
+        working-directory: mobile
+        run: |
+          set -euo pipefail
+          flutter build apk --debug
+
+      # No signing credentials are required. CodeQL traces the Xcode/Swift
+      # compilation performed by Flutter.
+      - name: Build iOS for CodeQL
+        if: matrix.language == 'swift'
+        working-directory: mobile
+        run: |
+          set -euo pipefail
+          flutter build ios --release --no-codesign
+
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@v4
+        with:
+          category: "/language:${{ matrix.language }}"
