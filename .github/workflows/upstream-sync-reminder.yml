@@ -1,0 +1,93 @@
+name: Upstream sync reminder
+
+# mirror-upstream.yml keeps mirror/upstream-main level every day, but nothing
+# says when fork main has fallen behind upstream: bin/upstream-sync runs only
+# when someone remembers it (#263). This counts the commits fork main lacks
+# and keeps one open reminder issue saying so. It never merges; a sync needs
+# conflicts resolved by hand. See docs/llm-guides/upstream-delivery.md.
+
+on:
+  schedule:
+    # Mondays, after the 04:23 mirror run.
+    - cron: '7 5 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: upstream-sync-reminder
+  cancel-in-progress: false
+
+jobs:
+  remind:
+    if: github.repository == 'jaysbeekay/sure'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out fork
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Count commits fork main lacks
+        id: count
+        shell: bash
+        run: |
+          git remote add upstream https://github.com/we-promise/sure.git
+          git fetch --no-tags upstream main
+          git fetch --no-tags origin main
+
+          # The same count bin/upstream-sync uses to decide there is work.
+          behind="$(git rev-list --count origin/main..upstream/main)"
+          {
+            echo "behind=${behind}"
+            echo "fork_sha=$(git rev-parse --short origin/main)"
+            echo "upstream_sha=$(git rev-parse --short upstream/main)"
+          } >> "$GITHUB_OUTPUT"
+          echo "fork main is ${behind} commit(s) behind upstream main"
+
+      - name: Open or update the reminder
+        if: steps.count.outputs.behind != '0'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          BEHIND: ${{ steps.count.outputs.behind }}
+          FORK_SHA: ${{ steps.count.outputs.fork_sha }}
+          UPSTREAM_SHA: ${{ steps.count.outputs.upstream_sha }}
+        run: |
+          # The marker, not the title, identifies the reminder: an issue someone
+          # opens by hand with a similar title is never edited or counted.
+          marker='<!-- upstream-sync-reminder -->'
+
+          body_file="$(mktemp)"
+          cat > "$body_file" <<EOF
+          ${marker}
+          Fork \`main\` (\`${FORK_SHA}\`) is **${BEHIND} commit(s)** behind we-promise/sure \`main\` (\`${UPSTREAM_SHA}\`), as of $(date -u +%Y-%m-%d).
+
+          Run the weekly sync, per #118's "Staying in sync while building locally" section:
+
+          \`\`\`
+          bin/upstream-sync
+          \`\`\`
+
+          This issue is updated in place each week until the sync merges; close it then.
+          EOF
+
+          # Only an issue this workflow opened can be the reminder: the repo is
+          # public, so anyone could open an issue carrying the marker. Every page
+          # is read, so the lookup has no cap to fall off.
+          matches="$(gh api --paginate \
+            "repos/${GH_REPO}/issues?state=open&creator=github-actions%5Bbot%5D&per_page=100" \
+            --jq ".[] | select(.pull_request | not) | select((.body // \"\") | contains(\"${marker}\")) | .number")"
+          existing="${matches%%$'\n'*}"
+
+          if [ -n "$existing" ]; then
+            gh issue edit "$existing" --body-file "$body_file"
+            echo "updated #${existing}"
+          else
+            gh issue create --title "Fork main is behind upstream: run the weekly sync" --body-file "$body_file"
+          fi
