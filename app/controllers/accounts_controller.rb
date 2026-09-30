@@ -86,7 +86,7 @@ class AccountsController < ApplicationController
     @chart_view = params[:chart_view] || "balance"
     @tab = params[:tab]
     @accessible_account_ids = Current.user.accessible_accounts.pluck(:id).to_set
-    @q = params.fetch(:q, {}).permit(:search, status: [])
+    @q = params.fetch(:q, {}).permit(:search, :uncategorized, status: [])
     @extra_payment_params = extra_payment_params
     entries = @account.entries.excluding_split_parents.search(@q).reverse_chronological.includes(:entryable)
     if statement_tab_active?
@@ -129,7 +129,7 @@ class AccountsController < ApplicationController
     if transactions.any?
       ActiveRecord::Associations::Preloader.new(
         records: transactions,
-        associations: [ :transfer_as_inflow, :transfer_as_outflow, :category, :merchant ]
+        associations: [ :transfer_as_inflow, :transfer_as_outflow, :category, :merchant, :tags ]
       ).call
     end
 
