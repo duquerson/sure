@@ -105,6 +105,16 @@ jobs:
         working-directory: mobile
         run: flutter pub run flutter_launcher_icons
 
+      # Writes the Xcode configuration (Generated.xcconfig) for a debug
+      # simulator build without compiling anything, so the build CodeQL
+      # traces below can be a plain xcodebuild. Runs before CodeQL starts.
+      - name: Prepare the iOS project
+        if: matrix.language == 'swift'
+        working-directory: mobile
+        run: flutter build ios --config-only --debug --simulator --no-codesign
+
+      # CodeQL requires CocoaPods dependencies installed before the database
+      # is created.
       - name: Install CocoaPods dependencies
         if: matrix.language == 'swift'
         working-directory: mobile/ios
@@ -125,14 +135,24 @@ jobs:
           set -euo pipefail
           flutter build apk --debug
 
-      # No signing credentials are required. CodeQL traces the Xcode/Swift
-      # compilation performed by Flutter.
+      # xcodebuild directly, not `flutter build ios`: CodeQL traced nothing
+      # when Flutter's tool launched Xcode itself ("CodeQL detected code
+      # written in Swift but this run didn't build any of it"), although the
+      # build succeeded. One architecture on the simulator, with signing off,
+      # as GitHub's Swift guidance recommends.
       - name: Build iOS for CodeQL
         if: matrix.language == 'swift'
-        working-directory: mobile
+        working-directory: mobile/ios
         run: |
           set -euo pipefail
-          flutter build ios --release --no-codesign
+          xcodebuild build \
+            -workspace Runner.xcworkspace \
+            -scheme Runner \
+            -configuration Debug \
+            -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' \
+            ARCHS=arm64 ONLY_ACTIVE_ARCH=YES \
+            CODE_SIGNING_ALLOWED=NO
 
       - name: Perform CodeQL analysis
         uses: github/codeql-action/analyze@v4
