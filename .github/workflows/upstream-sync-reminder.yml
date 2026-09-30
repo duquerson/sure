@@ -11,13 +11,6 @@ on:
     # Mondays, after the 04:23 mirror run.
     - cron: '7 5 * * 1'
   workflow_dispatch:
-    inputs:
-      fork_ref:
-        description: Ref treated as fork main (point both at one ref to exercise the level path)
-        default: origin/main
-      upstream_ref:
-        description: Ref treated as upstream main
-        default: upstream/main
 
 permissions:
   contents: read
@@ -42,20 +35,17 @@ jobs:
       - name: Count commits fork main lacks
         id: count
         shell: bash
-        env:
-          FORK_REF: ${{ inputs.fork_ref || 'origin/main' }}
-          UPSTREAM_REF: ${{ inputs.upstream_ref || 'upstream/main' }}
         run: |
           git remote add upstream https://github.com/we-promise/sure.git
           git fetch --no-tags upstream main
           git fetch --no-tags origin main
 
           # The same count bin/upstream-sync uses to decide there is work.
-          behind="$(git rev-list --count "${FORK_REF}..${UPSTREAM_REF}")"
+          behind="$(git rev-list --count origin/main..upstream/main)"
           {
             echo "behind=${behind}"
-            echo "fork_sha=$(git rev-parse --short "${FORK_REF}")"
-            echo "upstream_sha=$(git rev-parse --short "${UPSTREAM_REF}")"
+            echo "fork_sha=$(git rev-parse --short origin/main)"
+            echo "upstream_sha=$(git rev-parse --short upstream/main)"
           } >> "$GITHUB_OUTPUT"
           echo "fork main is ${behind} commit(s) behind upstream main"
 
