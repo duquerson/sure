@@ -2,9 +2,9 @@ require "test_helper"
 
 # track_stale_unmatched_pending counts stale pending entries that have no posted
 # match. It decides "pending" as Transaction#pending? does, across every pending
-# provider, like the stale-pending exclusion it is paired with -- which runs
-# immediately AFTER it, since excluding first would empty this count's
-# candidate set. See SimplefinItem::Importer#run_pending_reconciliation.
+# provider, like the stale-pending exclusion that runs straight after it. The
+# order of the two is pinned in SimplefinItem::ImporterTest; these tests cover
+# the predicate alone.
 class SimplefinItem::ImporterStaleUnmatchedPendingTest < ActiveSupport::TestCase
   include EntriesTestHelper
 
@@ -50,25 +50,14 @@ class SimplefinItem::ImporterStaleUnmatchedPendingTest < ActiveSupport::TestCase
     assert_nil stats["stale_unmatched_pending"]
   end
 
-  # The tests above call track_stale_unmatched_pending directly, which is how
-  # the count being permanently zero in production went unnoticed: the stale
-  # exclusion runs in the same pass and flips `excluded: true` on a superset of
-  # what the count asks for. These two go through run_pending_reconciliation,
-  # the sequence import_account actually runs, so the order is under test.
-  test "the import sequence counts a stale unmatched entry before excluding it" do
-    stale_entry("simplefin" => { "pending" => true })
-
-    @importer.send(:run_pending_reconciliation, @account)
-
-    assert_equal 1, stats["stale_unmatched_pending"]
-    assert_equal 1, stats["stale_pending_excluded"]
-  end
-
-  test "the import sequence does not re-count an entry a previous sync excluded" do
+  # Fork main only, declared in the port PR: the pre-flight pins the order in
+  # ImporterTest but has no negative case for an entry a previous sync already
+  # excluded. The pair must count and exclude nothing for it.
+  test "the review pass does not re-count an entry a previous sync excluded" do
     entry = stale_entry("simplefin" => { "pending" => true })
     entry.update!(excluded: true)
 
-    @importer.send(:run_pending_reconciliation, @account)
+    @importer.send(:review_and_exclude_stale_pending, @account)
 
     assert_nil stats["stale_unmatched_pending"]
     assert_nil stats["stale_pending_excluded"]

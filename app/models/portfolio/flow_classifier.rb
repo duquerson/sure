@@ -30,13 +30,26 @@
 # counterpart leg's account is inside the scope. Direction for an external
 # flow comes from the Trade's quantity sign or the Transaction's amount sign
 # (negative amount = money in).
+#
+# What a caller must do with the answer:
+#
+# - Sum signed amounts per class. :income and :fee are decided by the label
+#   alone, not by the sign of the amount, so a margin-interest charge labelled
+#   "Interest" is :income with a positive amount, and a fee rebate labelled
+#   "Fee" is :fee with a negative one. A signed sum nets them correctly; a sum
+#   of absolute values would count the charge as more income.
+# - Scope to one family itself. Neither form filters by family: #classify_ids
+#   reads whichever entry ids it is given, and scope_account_ids is taken as
+#   given. Pass only ids and accounts the caller has already scoped.
 class Portfolio::FlowClassifier
   CLASSES = %i[external_inflow external_outflow income fee internal].freeze
 
   # Activity label -> class. Two pseudo-classes resolve at classification
-  # time: :external becomes an inflow or an outflow by direction, and
-  # :transfer becomes :internal when the counterpart is in scope and an
-  # external flow otherwise. A nil rule means the label decides nothing and
+  # time, and both consult the link before the label: :external and :transfer
+  # each become :internal when the entry is a linked Transfer whose other leg
+  # is inside the scope, and an inflow or an outflow by direction otherwise.
+  # A label describes what the borrower meant; a Transfer row records where
+  # the money went, and between two accounts in scope it went nowhere. A nil rule means the label decides nothing and
   # the fallthrough applies (a Trade is internal; a Transaction goes by kind).
   #
   # "Exchange" is internal on both a Trade and a Transaction here, following
@@ -105,6 +118,7 @@ class Portfolio::FlowClassifier
   # The same decision as #classify for every id given, taken in SQL. Returns
   # { entry_id => class or nil }. Later drops embed #sql_case in their own
   # daily queries; this method is the reference the parity test holds them to.
+  # The ids are not filtered by family; the caller passes ids it has scoped.
   def classify_ids(entry_ids)
     ids = Array(entry_ids).map(&:to_s)
     return {} if ids.empty?
@@ -160,7 +174,7 @@ class Portfolio::FlowClassifier
         WHEN #{label_sql} IN (#{quote_list(INCOME_LABELS)}) THEN 'income'
         WHEN #{label_sql} IN (#{quote_list(FEE_LABELS)}) THEN 'fee'
         WHEN #{label_sql} IN (#{quote_list(INTERNAL_LABELS)}) THEN 'internal'
-        WHEN #{label_sql} IN (#{quote_list(EXTERNAL_LABELS)}) THEN #{direction_sql}
+        WHEN #{label_sql} IN (#{quote_list(EXTERNAL_LABELS)}) THEN #{transfer_resolution_sql}
         WHEN #{label_sql} = '#{TRANSFER_LABEL}' AND entries.entryable_type = 'Trade'
           THEN CASE WHEN #{security_transfer_counterpart_in_scope_sql} THEN 'internal' ELSE #{direction_sql} END
         WHEN #{label_sql} = '#{TRANSFER_LABEL}' THEN #{transfer_resolution_sql}
@@ -194,7 +208,13 @@ class Portfolio::FlowClassifier
       case rule
       when nil
         transaction.transfer? ? transfer_resolution(entry, transaction) : transaction_direction(entry)
-      when :external then transaction_direction(entry)
+      # A Contribution or Withdrawal label says where the borrower thinks the
+      # money went; a linked Transfer says where it actually went. When both
+      # legs are inside the scope the movement is internal whatever either leg
+      # is labelled, so the label cannot outrank the link. #transfer_resolution
+      # falls back to the same direction this used to return whenever there is
+      # no link, or the counterpart sits outside the scope.
+      when :external then transfer_resolution(entry, transaction)
       when :transfer then transfer_resolution(entry, transaction)
       else rule
       end
