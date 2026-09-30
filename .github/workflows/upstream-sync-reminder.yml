@@ -77,8 +77,13 @@ jobs:
           This issue is updated in place each week until the sync merges; close it then.
           EOF
 
-          existing="$(gh issue list --state open --limit 500 --json number,body \
-            --jq "[.[] | select(.body | contains(\"${marker}\"))] | first | .number // empty")"
+          # Only an issue this workflow opened can be the reminder: the repo is
+          # public, so anyone could open an issue carrying the marker. Every page
+          # is read, so the lookup has no cap to fall off.
+          matches="$(gh api --paginate \
+            "repos/${GH_REPO}/issues?state=open&creator=github-actions%5Bbot%5D&per_page=100" \
+            --jq ".[] | select(.pull_request | not) | select((.body // \"\") | contains(\"${marker}\")) | .number")"
+          existing="${matches%%$'\n'*}"
 
           if [ -n "$existing" ]; then
             gh issue edit "$existing" --body-file "$body_file"
