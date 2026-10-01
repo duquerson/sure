@@ -100,6 +100,39 @@ class Spending::HeatmapTest < ActiveSupport::TestCase
     assert_equal 0, cell(heatmap, Date.new(2024, 3, 14)).total
   end
 
+  # Spend and a refund of the same amount net to nothing, which the budget
+  # treats as no spending at all: the category must leave the grid, not show a
+  # positive day and a negative one.
+  test "a category refunded exactly to zero leaves no trace in the grid" do
+    spend(50, Date.new(2024, 3, 4), category: @dining)
+    spend(-50, Date.new(2024, 3, 6), category: @dining)
+
+    assert_equal 0, cell(heatmap, Date.new(2024, 3, 4)).total
+    assert_equal 0, cell(heatmap, Date.new(2024, 3, 6)).total
+    assert_equal 0, heatmap.total
+  end
+
+  test "pending transactions add nothing, as in the income statement" do
+    spend(100, Date.new(2024, 3, 4), category: @dining)
+    posted = heatmap.total
+
+    Entry.create!(account: accounts(:depository), name: "Pending", date: Date.new(2024, 3, 5), currency: "USD", amount: 70,
+                  entryable: Transaction.new(category: @dining, extra: { "simplefin" => { "pending" => true } }))
+
+    assert_equal posted, heatmap.total
+    assert_equal @family.income_statement(user: nil).net_category_totals(period: PERIOD).total_net_expense, heatmap.total
+  end
+
+  test "one-time and credit-card-payment kinds add nothing, as in the budget" do
+    spend(100, Date.new(2024, 3, 4), category: @dining)
+    posted = heatmap.total
+
+    spend(300, Date.new(2024, 3, 5), category: @dining, kind: "one_time")
+    spend(400, Date.new(2024, 3, 5), category: @dining, kind: "cc_payment")
+
+    assert_equal posted, heatmap.total
+  end
+
   test "places each date in its weekday column and its week row" do
     map = heatmap
 

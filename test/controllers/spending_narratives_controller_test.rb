@@ -149,6 +149,26 @@ class SpendingNarrativesControllerTest < ActionDispatch::IntegrationTest
     assert_select "[data-testid=pace-empty]"
   end
 
+  # The page counts the viewer's accounts, as the budget does: spending on an
+  # account a member does not include in their finances is not theirs to see here.
+  test "the page is scoped to the viewer's own accounts" do
+    private_account = Account.create!(family: @family, owner: @user, name: "Admin only", balance: 0, currency: "USD", accountable: Depository.new)
+    create_transaction(account: private_account, category: @dining, amount: 400, date: Date.new(2024, 3, 3), name: "Private")
+
+    visit
+    assert_select "[data-testid=heatmap-total]", text: "$400.00"
+
+    member = users(:family_member)
+    assert_not_includes member.finance_accounts.pluck(:id), private_account.id
+    member.update!(preferences: (member.preferences || {}).merge("preview_features_enabled" => true))
+    sign_in member
+    visit
+
+    assert_response :success
+    assert_select "[data-testid=heatmap-total]", count: 0
+    assert_no_match(/Story Dining/, response.body)
+  end
+
   test "the whole page reads one date" do
     create_budget
     spend(300, Date.new(2024, 3, 3))

@@ -62,9 +62,9 @@ class Spending::Heatmap
   end
 
   # The biggest single day, for scaling the colour of a cell. Never negative:
-  # a refund-only day is not a peak.
+  # the days sum to a non-negative total, so the largest of them cannot be.
   def peak
-    [ daily_totals.values.max || 0, 0 ].max.to_d
+    (daily_totals.values.max || 0).to_d
   end
 
   private
