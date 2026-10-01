@@ -65,6 +65,16 @@ class Loan < ApplicationRecord
   has_many :loan_offset_accounts, dependent: :destroy
   has_many :offset_accounts, through: :loan_offset_accounts, source: :account
 
+  # The account types a loan can be secured by.
+  COLLATERAL_ACCOUNTABLE_TYPES = %w[Property Vehicle].freeze
+
+  # The asset that secures this loan, if the owner has said so. Optional, and
+  # judged only when the link itself changes: the loan form resubmits the id it
+  # already holds on every edit, so a validation that ran on every save would
+  # reject any edit of a loan whose asset has since become ineligible.
+  belongs_to :collateral_account, class_name: "Account", optional: true
+  validate :collateral_account_is_eligible, if: :will_save_change_to_collateral_account_id?
+
   attr_accessor :offset_account_ids
 
   # Structured {effective_date, rate} rows from the form. The jsonb column is
@@ -126,6 +136,50 @@ class Loan < ApplicationRecord
   # whole point of #15.
   def monthly_payment
     amortization_schedule.monthly_payment
+  end
+
+  # Why `account` cannot secure this loan; empty when it can. The one definition
+  # shared by the validation and by the form's candidate list, so the list never
+  # offers an account the save would refuse.
+  #
+  # The checks that need the loan's own account are skipped until it exists: a
+  # loan being created is validated before it is attached to one.
+  def collateral_ineligibilities_for(account, loan_account: self.account)
+    return [] if account.nil?
+
+    unless COLLATERAL_ACCOUNTABLE_TYPES.include?(account.accountable_type)
+      return [ "must be a property or vehicle" ]
+    end
+
+    problems = []
+
+    if loan_account
+      # Another family's account has no standing to be visible to this one's
+      # viewers, so the family is the only thing worth saying about it.
+      return [ "must belong to the same family as the loan" ] unless account.family_id == loan_account.family_id
+
+      problems << "must use the same currency as the loan" unless account.currency == loan_account.currency
+
+      invisible = collateral_viewers(loan_account).reject { |user| account.shared_with?(user) }
+      if invisible.any?
+        problems << "must be visible to every loan viewer (missing: #{invisible.map(&:display_name).join(", ")})"
+      end
+    end
+
+    problems
+  end
+
+  # The accounts a viewer may pick as this loan's collateral: assets of the right
+  # type in the loan's family that they can see and that the save would accept.
+  # `family` stands in for the loan account's when the loan has none yet.
+  def self.collateral_candidates_for(loan, viewer:, family: nil)
+    family ||= loan.account&.family
+    return Account.none unless family && viewer
+
+    Account.accessible_by(viewer).visible
+      .where(family_id: family.id, accountable_type: COLLATERAL_ACCOUNTABLE_TYPES)
+      .order(:name)
+      .select { |candidate| loan.collateral_ineligibilities_for(candidate).empty? }
   end
 
   # Drops both memoized calculators after an offset link changes. Offsets alter
@@ -769,6 +823,17 @@ class Loan < ApplicationRecord
     # Rejects unknown or ineligible offset accounts, so the form can show the
     # reason rather than the database raising at the user. Runs as a validation
     # so `save` actually returns false -- see the registration note above.
+    def collateral_account_is_eligible
+      collateral_ineligibilities_for(collateral_account).each { |problem| errors.add(:collateral_account, problem) }
+    end
+
+    # Everyone who can see the loan's account. Mirrors LoanOffsetAccount's rule
+    # (`account_is_visible_to_every_loan_viewer`): a link the loan's viewers could
+    # not follow would show them a figure from an account they cannot see.
+    def collateral_viewers(loan_account)
+      loan_account.family.users.select { |user| loan_account.shared_with?(user) }
+    end
+
     def validate_offset_accounts
       return unless variable_rate_type?
 

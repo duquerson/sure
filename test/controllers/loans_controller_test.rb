@@ -234,6 +234,159 @@ class LoansControllerTest < ActionDispatch::IntegrationTest
     assert_redirected_to created_loan.account
   end
 
+  # --- #129 collateral link --------------------------------------------------
+
+  test "links a loan to a property" do
+    property = accounts(:property)
+
+    assert_nil @account.loan.collateral_account_id
+
+    patch loan_path(@account), params: {
+      account: { accountable_attributes: { id: @account.accountable_id, collateral_account_id: property.id } }
+    }
+
+    assert_redirected_to @account
+    assert_equal property.id, @account.loan.reload.collateral_account_id
+  end
+
+  test "a blank collateral clears the link" do
+    @account.loan.update!(collateral_account: accounts(:property))
+
+    patch loan_path(@account), params: {
+      account: { accountable_attributes: { id: @account.accountable_id, collateral_account_id: "" } }
+    }
+
+    assert_nil @account.loan.reload.collateral_account_id
+  end
+
+  test "refuses an account from another family and leaves the link as it was" do
+    foreign = families(:empty).accounts.create!(name: "Not ours", currency: "USD", balance: 1, accountable: Property.new)
+
+    patch loan_path(@account), params: {
+      account: { accountable_attributes: { id: @account.accountable_id, collateral_account_id: foreign.id } }
+    }
+
+    assert_response :unprocessable_entity
+    assert_nil @account.loan.reload.collateral_account_id
+  end
+
+  test "refuses a kind of account that cannot secure a loan" do
+    patch loan_path(@account), params: {
+      account: { accountable_attributes: { id: @account.accountable_id, collateral_account_id: accounts(:depository).id } }
+    }
+
+    assert_response :unprocessable_entity
+    assert_nil @account.loan.reload.collateral_account_id
+  end
+
+  test "a failed create re-renders the form with the collateral choices" do
+    foreign = families(:empty).accounts.create!(name: "Not ours", currency: "USD", balance: 1, accountable: Property.new)
+
+    post loans_path, params: {
+      account: {
+        name: "Secured loan", balance: 50_000, currency: "USD", accountable_type: "Loan",
+        accountable_attributes: { subtype: "mortgage", interest_rate: 5, term_months: 60, rate_type: "fixed",
+                                  initial_balance: 50_000, collateral_account_id: foreign.id }
+      }
+    }
+
+    assert_response :unprocessable_entity
+    assert_select "select[name='account[accountable_attributes][collateral_account_id]']"
+  end
+
+  test "creates a loan secured by a vehicle" do
+    vehicle = accounts(:vehicle)
+
+    post loans_path, params: {
+      account: {
+        name: "Car loan", balance: 12_000, currency: "USD", accountable_type: "Loan",
+        accountable_attributes: { subtype: "auto", interest_rate: 6, term_months: 48, rate_type: "fixed",
+                                  initial_balance: 12_000, collateral_account_id: vehicle.id }
+      }
+    }
+
+    created = Account.order(:created_at).last.accountable
+    assert_equal vehicle.id, created.collateral_account_id
+  end
+
+  test "the form offers properties and vehicles the save would accept, and nothing else" do
+    foreign = families(:empty).accounts.create!(name: "Not ours", currency: "USD", balance: 1, accountable: Property.new)
+    euro = @account.family.accounts.create!(name: "Flat in Lisbon", currency: "EUR", balance: 1, owner: @user, accountable: Property.new)
+
+    get edit_loan_path(@account)
+
+    assert_response :success
+    assert_select "select[name='account[accountable_attributes][collateral_account_id]']" do
+      assert_select "option[value='']"
+      assert_select "option[value='#{accounts(:property).id}']", text: accounts(:property).name
+      assert_select "option[value='#{accounts(:vehicle).id}']", text: accounts(:vehicle).name
+      assert_select "option[value='#{accounts(:depository).id}']", count: 0
+      assert_select "option[value='#{foreign.id}']", count: 0
+      assert_select "option[value='#{euro.id}']", count: 0
+    end
+  end
+
+  # Open the form, change nothing, save: the link must survive even though the
+  # asset would no longer be accepted fresh.
+  test "an existing link stays selectable when the asset would no longer qualify" do
+    property = accounts(:property)
+    @account.loan.update!(collateral_account: property)
+    property.update_columns(currency: "EUR")
+
+    get edit_loan_path(@account)
+
+    assert_select "option[value='#{property.id}'][selected]"
+
+    patch loan_path(@account), params: {
+      account: { accountable_attributes: { id: @account.accountable_id, collateral_account_id: property.id, interest_rate: 4.2 } }
+    }
+
+    assert_redirected_to @account
+    assert_equal property.id, @account.loan.reload.collateral_account_id
+  end
+
+  test "a viewer who cannot see the asset leaves the link alone when they save" do
+    property = accounts(:property)
+    @account.loan.update!(collateral_account: property)
+    member = users(:family_member)
+    @account.share_with!(member, permission: "full_control")
+    @account.update!(owner: @user)
+    sign_in member
+
+    assert_not Account.accessible_by(member).exists?(id: property.id), "precondition"
+
+    patch loan_path(@account), params: {
+      account: { accountable_attributes: { id: @account.accountable_id, collateral_account_id: "", interest_rate: 4.1 } }
+    }
+
+    loan = @account.loan.reload
+    assert_equal property.id, loan.collateral_account_id
+    assert_equal 4.1, loan.interest_rate
+  end
+
+  test "the loan page shows the equity in its collateral" do
+    accounts(:property).update_columns(balance: 550_000)
+    @account.update_columns(balance: 500_000)
+    @account.loan.update!(collateral_account: accounts(:property))
+
+    get account_path(@account)
+
+    assert_response :success
+    assert_select "[data-collateral-position]" do
+      assert_select "h3", text: "Secured by"
+      assert_select "a[href='#{account_path(accounts(:property))}']", text: accounts(:property).name
+      assert_select "h4", text: "Equity"
+      assert_select "p", text: "$50,000.00"
+    end
+  end
+
+  test "a loan with no collateral shows no collateral section" do
+    get account_path(@account)
+
+    assert_response :success
+    assert_select "[data-collateral-position]", count: 0
+  end
+
   # `adjustable` moved from this list to the one below when #14 gave it the
   # variable meaning. It is a behaviour change, not a test fix: an adjustable
   # loan's offset links used to be deleted on every save.

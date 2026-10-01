@@ -353,6 +353,20 @@ class Family::DataExporterTest < ActiveSupport::TestCase
     end
   end
 
+  test "exports a loan's collateral link with its account" do
+    property = @family.accounts.create!(name: "House", balance: 500_000, currency: "USD", accountable: Property.new)
+    loan_account = @family.accounts.create!(name: "Mortgage", balance: 400_000, currency: "USD", accountable: Loan.new)
+    loan_account.loan.update!(collateral_account: property)
+
+    Zip::File.open_buffer(@exporter.generate_export) do |zip|
+      exported = zip.read("all.ndjson").split("\n").map { |line| JSON.parse(line) }
+        .select { |line| line["type"] == "Account" && line.dig("data", "id") == loan_account.id }
+
+      assert_equal 1, exported.size
+      assert_equal property.id, exported.first.dig("data", "accountable", "collateral_account_id")
+    end
+  end
+
   test "generates valid NDJSON file" do
     zip_data = @exporter.generate_export
 

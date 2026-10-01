@@ -31,6 +31,38 @@ class Family::DataImporterTest < ActiveSupport::TestCase
     assert_equal "Depository", account.accountable_type
   end
 
+  test "relinks a loan to the property that secured it, under the new account ids" do
+    ndjson = build_ndjson(collateral_records(collateral_ref: "old-property"))
+
+    result = Family::DataImporter.new(@family, ndjson).import!
+
+    property = result[:accounts].find { |account| account.accountable_type == "Property" }
+    loan = result[:accounts].find { |account| account.accountable_type == "Loan" }.loan
+    assert_equal property.id, loan.reload.collateral_account_id
+    assert_not_equal "old-property", loan.collateral_account_id
+  end
+
+  test "leaves a loan unlinked when its collateral is not in the import" do
+    ndjson = build_ndjson(collateral_records(collateral_ref: "some-account-we-never-exported"))
+
+    result = Family::DataImporter.new(@family, ndjson).import!
+
+    loan = result[:accounts].find { |account| account.accountable_type == "Loan" }.loan
+    assert_nil loan.reload.collateral_account_id
+  end
+
+  test "a loan whose collateral the model refuses is imported unlinked and the refusal is logged" do
+    records = collateral_records(collateral_ref: "old-property")
+    records.first[:data][:currency] = "EUR"
+
+    assert_difference -> { DebugLogEntry.where(category: "import", family: @family).count }, 1 do
+      result = Family::DataImporter.new(@family, build_ndjson(records)).import!
+
+      loan = result[:accounts].find { |account| account.accountable_type == "Loan" }.loan
+      assert_nil loan.reload.collateral_account_id
+    end
+  end
+
   test "imports non-destructive account status from ndjson" do
     ndjson = build_ndjson([
       {
@@ -2749,6 +2781,18 @@ class Family::DataImporterTest < ActiveSupport::TestCase
 
     def build_ndjson(records)
       records.map(&:to_json).join("\n")
+    end
+
+    # A property and a loan. The loan is listed first, as an export's account
+    # order does not guarantee the asset comes before what it secures.
+    def collateral_records(collateral_ref:)
+      [
+        { type: "Account", data: { id: "old-loan", name: "Mortgage", balance: "400000.00", currency: "USD",
+                                   accountable_type: "Loan",
+                                   accountable: { subtype: "mortgage", collateral_account_id: collateral_ref } } },
+        { type: "Account", data: { id: "old-property", name: "House", balance: "500000.00", currency: "USD",
+                                   accountable_type: "Property", accountable: { subtype: "house" } } }
+      ]
     end
 
     # A bill, one non-monthly rule, a settled occurrence, and the payment that

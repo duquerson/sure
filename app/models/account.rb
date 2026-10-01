@@ -19,6 +19,9 @@ class Account < ApplicationRecord
   has_many :shared_users, through: :account_shares, source: :user
   has_many :import_mappings, as: :mappable, dependent: :destroy, class_name: "Import::Mapping"
   has_many :entries, dependent: :destroy
+  # Loans this account secures. No `dependent:`: loans.collateral_account_id
+  # nullifies in the database, so deleting the asset unlinks them.
+  has_many :secured_loans, class_name: "Loan", foreign_key: :collateral_account_id, inverse_of: :collateral_account
   has_many :transactions, through: :entries, source: :entryable, source_type: "Transaction"
   has_many :valuations, through: :entries, source: :entryable, source_type: "Valuation"
   has_many :trades, through: :entries, source: :entryable, source_type: "Trade"
@@ -148,6 +151,14 @@ class Account < ApplicationRecord
   end
 
   accepts_nested_attributes_for :accountable, update_only: true
+
+  # `loan.account` is nil while a new loan validates (Rails cannot infer the
+  # inverse across a polymorphic association), so the loan's own check of its
+  # collateral link has nothing to compare the asset's family, currency and
+  # viewers against, and a forged id would sail through creation. A new account
+  # says who it is on the loan's behalf. An existing account is judged by the
+  # loan's own validation, which can see it, so it is not judged twice here.
+  validate :new_loan_collateral_is_eligible, if: -> { new_record? && loan? }
 
   # Account state machine
   aasm column: :status, timestamps: true do
@@ -730,6 +741,14 @@ class Account < ApplicationRecord
   end
 
   private
+
+    def new_loan_collateral_is_eligible
+      return unless family && accountable.collateral_account_id.present?
+
+      accountable.collateral_ineligibilities_for(accountable.collateral_account, loan_account: self).each do |problem|
+        errors.add(:base, "Collateral account #{problem}")
+      end
+    end
 
     def assign_default_owner
       return if owner.present?
