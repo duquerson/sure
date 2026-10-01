@@ -20,7 +20,7 @@ class Portfolio::SectionRegistry
   # The built-in section keys, in declaration order. The preferences
   # endpoint accepts only these, so a saved order or collapsed set cannot
   # carry arbitrary strings into the user's preferences.
-  KEYS = %w[kpis performance index_chart comparison drivers value_chart realized_gains holdings accounts allocation data_quality retirement].freeze
+  KEYS = %w[kpis performance index_chart comparison drivers value_chart realized_gains income holdings accounts allocation data_quality retirement].freeze
 
   attr_reader :statement, :period, :as_of, :user, :sort, :dir, :by, :look_through, :extra_sections
 
@@ -152,6 +152,19 @@ class Portfolio::SectionRegistry
           title: "portfolios.sections.realized_gains",
           partial: "portfolios/realized_gains",
           locals: shared_locals.merge(realized: realized_gains, bars: realized_gains_bars),
+          visible: true,
+          collapsible: true
+        },
+        # Always shown, for the reason realized_gains is: a portfolio that paid
+        # nothing in the period is a fact, and a vanishing section reads as
+        # "this page does not do income". `income` is a built-in key rather than
+        # an `extra_sections` entry because a user has to be able to reorder and
+        # collapse it -- the preferences endpoint accepts only KEYS.
+        {
+          key: "income",
+          title: "portfolios.sections.income",
+          partial: "portfolios/income",
+          locals: shared_locals.merge(income: income, trailing: trailing_income, bars: income_bars),
           visible: true,
           collapsible: true
         },
@@ -559,6 +572,46 @@ class Portfolio::SectionRegistry
           income: bucket.gains.to_f.round(2),
           expense: bucket.losses.to_f.round(2)
         }
+      end
+    end
+
+    # Portfolio::Performance#income for the selected period: a Hash, as
+    # `drivers` is, and for the same reason (the metrics are cached).
+    def income
+      @income ||= performance.income
+    end
+
+    # The twelve months ending at `as_of`, whatever period the page is set to.
+    # A yearly figure that moved with the picker would read as a different
+    # number on every view; this one only moves with the date.
+    #
+    # Built from the registry's one `as_of` and never from Date.current, so it
+    # cannot disagree with the sections beside it about what "now" is. Starts
+    # the day after the same date a year earlier, so the window is a full year
+    # and not a year and a day.
+    def trailing_income
+      @trailing_income ||= statement.performance(
+        period: Period.custom(start_date: as_of.prev_year + 1.day, end_date: as_of)
+      ).income
+    end
+
+    # The bar payload, in the shape and for the reasons realized_gains_bars
+    # gives. Income is the one series; the chart's second ("expense") is
+    # zero rather than absent because the controller reads both keys.
+    def income_bars
+      @income_bars ||= begin
+        buckets = income[:buckets]
+        short_format = buckets.map { |bucket| bucket[:month].year }.uniq.size > 1 ? "%b %y" : "%b"
+
+        buckets.map do |bucket|
+          {
+            date: bucket[:month],
+            label: I18n.l(bucket[:month], format: :short_month_year),
+            short_label: I18n.l(bucket[:month], format: short_format),
+            income: bucket[:amount].to_f.round(2),
+            expense: 0
+          }
+        end
       end
     end
 

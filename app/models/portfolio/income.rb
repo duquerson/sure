@@ -1,0 +1,106 @@
+# Dividend and interest income over a period, by the month it was paid, and
+# the fees charged against the same scope.
+#
+# This is a REGROUPING of rows that already exist, not a new measurement. The
+# daily rows carry `income` and `fees` already classified by
+# Portfolio::FlowClassifier -- Trade-shaped (qty 0, since we-promise/sure#1311)
+# and Transaction-shaped (Trading212, SimpleFIN) alike -- and already converted
+# at the day each was paid. Portfolio::Drivers sums the same fields over the
+# whole period; this groups them by calendar month. The two therefore agree by
+# construction, and R12's reconciliation is untouched because nothing here
+# reclassifies a row: a reader that re-derived "is this a dividend?" for itself
+# is the thing the classifier exists to prevent.
+#
+# WHAT THIS CANNOT DO is attribute income to a security. The daily rows are
+# scope-wide, and a Transaction-shaped dividend carries a security only when the
+# provider recorded one (Transaction#activity_security). A by-security table
+# needs an explicit unattributed bucket to reconcile to this series and is a
+# separate piece of work.
+class Portfolio::Income
+  # One calendar month in which income was paid. A month that paid nothing is
+  # absent rather than present as a zero -- the same distinction
+  # Portfolio::RealizedGains draws between an empty bar and a break-even month.
+  Bucket = Data.define(:month, :amount)
+
+  attr_reader :daily_returns
+
+  def initialize(daily_returns)
+    @daily_returns = daily_returns
+  end
+
+  # Months with income, oldest first.
+  def buckets
+    @buckets ||= rows
+      .group_by { |row| row.date.beginning_of_month }
+      .filter_map { |month, month_rows| build_bucket(month, month_rows) }
+      .sort_by(&:month)
+  end
+
+  def total
+    @total ||= rows.sum(BigDecimal(0), &:income)
+  end
+
+  # A positive magnitude, as Portfolio::Drivers#fees is. A fee is not negative
+  # income: folding it into a bar would hide what a payout cost inside the
+  # payout.
+  def fees
+    @fees ||= rows.sum(BigDecimal(0), &:fees)
+  end
+
+  # Whether the period paid any income. Fees alone do not count: this gates the
+  # income chart.
+  def any?
+    buckets.any?
+  end
+
+  # The mean of the period's daily closing values.
+  #
+  # The denominator of #fee_ratio, and the mean rather than either end because
+  # the ratio asks "what did holding this cost, relative to what was held",
+  # and a portfolio that tripled by the last day was not 3x as large on the
+  # days the fee was charged. Taken over today's value (or the closing one) a
+  # fee ratio shrinks every time the portfolio grows, which is the wrong way
+  # round for a cost figure.
+  def average_value
+    return BigDecimal(0) if rows.empty?
+
+    @average_value ||= rows.sum(BigDecimal(0), &:value_close) / rows.size
+  end
+
+  # Fees over the period's average value, as a fraction (0.01 == 1%), for the
+  # whole period -- not annualised. nil when the period held no value to divide
+  # by: that is "no ratio", not a ratio of zero.
+  def fee_ratio
+    return nil unless average_value.positive?
+
+    fees / average_value
+  end
+
+  # The shape Portfolio::Performance caches. Plain values only, so it survives
+  # Rails.cache the way Portfolio::Drivers#to_h does.
+  def to_h
+    {
+      buckets: buckets.map { |bucket| { month: bucket.month, amount: bucket.amount } },
+      total: total,
+      fees: fees,
+      average_value: average_value,
+      fee_ratio: fee_ratio
+    }
+  end
+
+  private
+    def rows
+      daily_returns.rows
+    end
+
+    # nil for a month whose income nets to zero, which is a month that paid
+    # nothing. A month that nets NEGATIVE (a reversed dividend larger than that
+    # month's payments) is kept and keeps its sign: dropping it would leave the
+    # buckets short of #total.
+    def build_bucket(month, month_rows)
+      amount = month_rows.sum(BigDecimal(0), &:income)
+      return nil if amount.zero?
+
+      Bucket.new(month: month, amount: amount)
+    end
+end

@@ -328,7 +328,7 @@ class PortfoliosControllerTest < ActionDispatch::IntegrationTest
     # family's period moves no value, so every component is zero and the
     # section hides rather than printing a table of zeros that reconciles to
     # zero.
-    assert_equal %w[value_chart kpis performance index_chart comparison realized_gains holdings accounts allocation data_quality retirement],
+    assert_equal %w[value_chart kpis performance index_chart comparison realized_gains income holdings accounts allocation data_quality retirement],
       css_select("[data-section-key]").map { |node| node["data-section-key"] }
     assert_select "[data-section-key=kpis][data-reports-section-collapsed-value=?]", "true"
     assert_select "[data-section-key=value_chart][data-reports-section-collapsed-value=?]", "false"
@@ -450,6 +450,42 @@ class PortfoliosControllerTest < ActionDispatch::IntegrationTest
     assert_response :success
 
     assert_equal baseline.size, grown.size, "adding 20 holdings changed the query count:\n#{(grown - baseline).join("\n")}"
+  end
+
+  # Nothing else renders this partial with a payout in it: the fixture family
+  # pays no income. A bad i18n key, or Money.new on a nil total, would reach a
+  # user before it reached a test.
+  test "the income section renders its totals, its chart and its fees" do
+    Portfolio::Performance.any_instance.stubs(:income).returns(
+      buckets: [ { month: Date.new(2026, 3, 1), amount: BigDecimal("42.5") } ],
+      total: BigDecimal("42.5"), fees: BigDecimal("4"),
+      average_value: BigDecimal("2000"), fee_ratio: BigDecimal("0.002")
+    )
+
+    get portfolio_path
+
+    assert_response :success
+    assert_select "[data-section-key=income] #portfolio-income" do
+      assert_select "[data-controller=bar-chart][data-bar-chart-data-value*=?]", "42.5"
+      assert_select "p", text: /#{Regexp.escape(ApplicationController.helpers.format_money(Money.new(42.5, "USD")))}/
+      assert_select "p", text: /0\.20%/, message: "4 of 2,000 is a fifth of a percent"
+    end
+  end
+
+  test "the income section says so when nothing was paid, and omits the fee line" do
+    Portfolio::Performance.any_instance.stubs(:income).returns(
+      buckets: [], total: BigDecimal(0), fees: BigDecimal(0),
+      average_value: BigDecimal("2000"), fee_ratio: BigDecimal(0)
+    )
+
+    get portfolio_path
+
+    assert_response :success
+    assert_select "#portfolio-income" do
+      assert_select "[data-controller=bar-chart]", count: 0, message: "an empty chart says nothing a sentence cannot"
+      assert_select "p", text: /#{Regexp.escape(I18n.t("portfolios.income.no_income", period: Period.last_30_days.label))}/
+      assert_select "p", text: /%/, count: 0, message: "no fees, so no ratio"
+    end
   end
 
   # The fixture family moves no value, so the drivers section hides and its
