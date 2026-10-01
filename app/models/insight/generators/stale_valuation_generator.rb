@@ -21,7 +21,6 @@ class Insight::Generators::StaleValuationGenerator < Insight::Generator
         facts: {
           account: account.name,
           balance: Money.new(account.balance, account.currency).format,
-          days: (today - last_valued_on).to_i,
           last_valued_on: I18n.l(last_valued_on, format: :long)
         },
         # The account and the date it was last valued are the signal. The balance

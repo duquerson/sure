@@ -106,4 +106,4 @@ en:
         over: "%{categories} went over budget this month. You've used %{budget_spent_pct}% of your total budget so far."
         near: "%{categories} are close to their limits this month. You've used %{budget_spent_pct}% of your total budget so far."
       budget_on_track: You've spent %{spent} of your %{budgeted} budget (%{budget_spent_pct}%) and everything is within its limit.
-      stale_valuation: "%{account} was last valued on %{last_valued_on} (%{days} days ago) and still counts as %{balance} in your net worth."
+      stale_valuation: "%{account} was last valued on %{last_valued_on} and still counts as %{balance} in your net worth."

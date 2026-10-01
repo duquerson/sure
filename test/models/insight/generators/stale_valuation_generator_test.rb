@@ -21,7 +21,7 @@ class Insight::Generators::StaleValuationGeneratorTest < ActiveSupport::TestCase
     assert_equal "low", insight.priority
     assert_equal @property.id, insight.metadata[:account_id]
     assert_equal 91.days.ago.to_date.iso8601, insight.metadata[:last_valued_on]
-    assert_equal 91, insight.facts[:days]
+    assert_not_includes insight.facts.keys, :days
   end
 
   test "says nothing at exactly the threshold" do
@@ -111,7 +111,7 @@ class Insight::Generators::StaleValuationGeneratorTest < ActiveSupport::TestCase
     insights = generate
 
     assert_equal [ @property.id ], insights.map { |i| i.metadata[:account_id] }
-    assert_equal 100, insights.first.facts[:days]
+    assert_equal 100.days.ago.to_date.iso8601, insights.first.metadata[:last_valued_on]
   end
 
   test "reports the oldest three when more are stale" do
@@ -139,6 +139,20 @@ class Insight::Generators::StaleValuationGeneratorTest < ActiveSupport::TestCase
 
     assert_not_includes insight.metadata.keys, :balance
     assert_equal Money.new(@property.balance, "USD").format, insight.facts[:balance]
+  end
+
+  # The body is written once and kept until the numbers change materially, so it
+  # must not carry anything that ages: a count of days would be wrong by the next
+  # night.
+  test "the stored prose carries no day count that would age" do
+    @family.users.update_all(ai_enabled: false)
+    value_on(@property, 91.days.ago.to_date)
+
+    generated = generate.first
+    body = Insight::BodyWriter.new(@family).write(generated)
+
+    assert_no_match(/\b91\b/, body)
+    assert_includes body, generated.facts[:last_valued_on]
   end
 
   test "writes the insight in German" do

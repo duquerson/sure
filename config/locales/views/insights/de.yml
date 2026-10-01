@@ -76,7 +76,7 @@ de:
       spending_anomaly:
         above: Hochgerechnet gibst du diesen Monat %{projected_spend} für %{category} aus, rund %{deviation_pct} % mehr als dein jüngster Monatsschnitt von %{baseline_spend}.
         below: Hochgerechnet gibst du diesen Monat %{projected_spend} für %{category} aus, rund %{deviation_pct} % weniger als dein jüngster Monatsschnitt von %{baseline_spend}.
-      stale_valuation: "%{account} wurde zuletzt am %{last_valued_on} bewertet (vor %{days} Tagen) und zählt noch mit %{balance} zum Nettovermögen."
+      stale_valuation: "%{account} wurde zuletzt am %{last_valued_on} bewertet und zählt noch mit %{balance} zum Nettovermögen."
       subscription_audit: "%{name} (%{amount}) ist seit dem erwarteten Termin am %{expected_on} nicht mehr aufgetaucht. Vielleicht ist das Abo gekündigt oder die Abbuchung hat sich verschoben."
     titles:
       budget_at_risk:

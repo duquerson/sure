@@ -74,7 +74,11 @@ module InsightsHelper
     when "idle_cash"
       facts["balance"] && [ facts["balance"], t("insights.figures.idle_days", count: facts["idle_days"].to_i) ]
     when "stale_valuation"
-      facts["balance"] && [ facts["balance"], t("insights.figures.days_unvalued", count: facts["days"].to_i) ]
+      # Days are worked out here, not stored: a stored count would be a day older
+      # for every night until the next material change.
+      last_valued_on = insight.metadata&.dig("last_valued_on")
+      facts["balance"] && last_valued_on &&
+        [ facts["balance"], t("insights.figures.days_unvalued", count: (Date.current - Date.parse(last_valued_on)).to_i) ]
     when "budget_at_risk"
       # Not budget_spent_pct: this card's headline is "N categories need
       # attention", and total consumption ("14% of budget") reads as reassurance
@@ -122,6 +126,10 @@ module InsightsHelper
       goal && { text: t("insights.actions.maintained_goal_depleted"), href: goal_path(goal) }
     when "stale_valuation"
       account = insight.family.accounts.visible.find_by(id: metadata["account_id"])
+      # Offered only to someone the valuation form would accept: it is a write.
+      # Broadcast renders have no Current.user, so there the account's presence is
+      # all that can be checked.
+      account = nil if account && Current.user && !AccountAuthorizable::PERMISSION_LEVELS[:write].include?(account.permission_for(Current.user))
       # The valuation form is a modal, so the card's link has to target the
       # modal frame; every other action navigates the page.
       account && { text: t("insights.actions.stale_valuation"), href: new_valuation_path(account_id: account.id), frame: :modal }
