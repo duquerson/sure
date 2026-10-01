@@ -50,6 +50,11 @@ class Spending::Narrative
     @pace ||= Spending::Pace.for(budget, on: on)
   end
 
+  # Net spend over the previous window; what a "change" is measured against.
+  def previous_spend
+    income_statement.net_category_totals(period: previous_period).total_net_expense.to_d
+  end
+
   def top_movers(limit: 5)
     Spending::TopMovers.new(income_statement: income_statement, period: period, previous_period: previous_period).movers(limit: limit)
   end

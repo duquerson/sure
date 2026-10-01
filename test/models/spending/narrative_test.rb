@@ -87,6 +87,17 @@ class Spending::NarrativeTest < ActiveSupport::TestCase
     assert_nil narrative.budget
   end
 
+  test "previous spend is the net spend of the previous window, and zero when there is none" do
+    category = @family.categories.create!(name: "Narrative prior", color: "#101010", lucide_icon: "circle")
+
+    assert_equal 0, narrative.previous_spend
+
+    create_transaction(category: category, amount: 300, date: narrative.previous_period.start_date, name: "Prior")
+    create_transaction(category: category, amount: 999, date: narrative.period.start_date, name: "Current")
+
+    assert_equal 300, narrative.previous_spend
+  end
+
   # The page's three parts must count the same accounts. A member who does not
   # count an account in their finances sees none of its spending in the grid or
   # the movers, as they see none in the budget.
