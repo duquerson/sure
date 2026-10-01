@@ -23,8 +23,9 @@ class Security < ApplicationRecord
   # chk_securities_asset_sub_class, chk_securities_classification_source);
   # adding a value means changing both, deliberately.
   #
-  # Schema only for now: nothing writes these columns yet, so every security
-  # is unclassified (NULL) until a later drop populates them.
+  # `apply_classification_defaults` fills the two kinds a provider cannot
+  # answer (cash, crypto) and the region; everything else stays unclassified
+  # (NULL) until a provider, the user or an approved proposal answers it.
   #
   # The migration repeats these lists rather than reading them from here, so
   # that it produces the same schema whenever it runs. Changing a list is
