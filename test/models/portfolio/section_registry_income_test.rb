@@ -149,6 +149,42 @@ class Portfolio::SectionRegistryIncomeTest < ActiveSupport::TestCase
     assert_nil income_locals[:yields].fetch(aapl.id.to_s)
   end
 
+  # The statement values a holding with `rates[currency] || 1`, so a EUR position
+  # with no rate on record is converted at parity and looks like a perfectly
+  # good cost basis. Dividing by it states a yield nobody can stand behind, with
+  # both income windows fully converted and nothing flagging it.
+  test "yield on cost is withheld when a held position's currency has no rate" do
+    aapl = securities(:aapl)
+    eur = create_portfolio_account(family: @family, currency: "EUR")
+    income_trade account: @account, date: @as_of - 10, amount: 5, security: aapl
+    lay_history
+    holding_snapshot account: eur, date: @as_of, qty: 10, price: 50, cost_basis: 40, security: aapl
+
+    assert_nil income_locals[:yields].fetch(aapl.id.to_s), "no EUR rate: the 400 EUR cost is not 400 USD"
+
+    set_rate from: "EUR", to: "USD", date: @as_of, rate: 2.0
+
+    assert_not_nil income_locals[:yields].fetch(aapl.id.to_s),
+                   "the control: with the rate on record the same position yields"
+  end
+
+  # A rateless currency withholds the yields it touches and no others.
+  test "an unrated currency withholds only the securities held in it" do
+    aapl = securities(:aapl)
+    msft = securities(:msft)
+    eur = create_portfolio_account(family: @family, currency: "EUR")
+    income_trade account: @account, date: @as_of - 10, amount: 5, security: aapl
+    income_trade account: @account, date: @as_of - 9, amount: 6, security: msft
+    lay_history
+    holding_snapshot account: eur, date: @as_of, qty: 10, price: 50, cost_basis: 40, security: aapl
+    holding_snapshot account: @account, date: @as_of, qty: 10, price: 50, cost_basis: 40, security: msft
+
+    yields = income_locals[:yields]
+
+    assert_nil yields.fetch(aapl.id.to_s), "held in EUR, which has no rate"
+    assert_in_delta 0.015, yields.fetch(msft.id.to_s).to_f, 0.0000001, "held in USD: 6 / 400"
+  end
+
   # A gifted or inherited position can carry a cost basis of zero on purpose.
   # Dividing by it is not a yield of infinity; it is no yield.
   test "yield on cost is withheld, not divided by zero, when the cost basis is zero" do

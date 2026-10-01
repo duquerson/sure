@@ -525,6 +525,27 @@ class PortfoliosControllerTest < ActionDispatch::IntegrationTest
     end
   end
 
+  # The case the unattributed row exists for, at its limit: a provider that
+  # records no security at all. With nothing attributed there are no security
+  # rows, and a table guarded on them alone vanishes -- taking the only
+  # explanation of where the income came from with it.
+  test "the income table still renders when none of the income is tied to a security" do
+    Portfolio::Performance.any_instance.stubs(:income).returns(
+      buckets: [ { month: Date.new(2026, 3, 1), amount: BigDecimal("12.5") } ],
+      total: BigDecimal("12.5"), fees: BigDecimal(0), average_value: BigDecimal("2000"), fee_ratio: nil,
+      by_security: {}
+    )
+
+    get portfolio_path
+
+    assert_response :success
+    assert_select "#portfolio-income-securities" do
+      assert_select "tr[data-portfolio-income-security]", count: 0
+      assert_select "tr[data-portfolio-income-unattributed] td", text: /#{Regexp.escape(ApplicationController.helpers.format_money(Money.new(BigDecimal("12.5"), "USD")))}/
+      assert_select "tr[data-portfolio-income-total]"
+    end
+  end
+
   test "the income table has no unattributed row when every dividend names a security" do
     aapl = securities(:aapl)
     Portfolio::Performance.any_instance.stubs(:income).returns(

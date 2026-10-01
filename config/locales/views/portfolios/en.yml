@@ -130,7 +130,7 @@ en:
         total: Total
         unattributed: Not tied to a security
         unattributed_hint: Income your provider did not record a security for.
-        yield_unavailable: Needs a known cost basis for every position, and a rate for every currency.
+        yield_unavailable: Shown only for a security you hold, with a known, positive cost basis for every position and an exchange rate for every currency.
       trailing_total: Last 12 months
     index_chart:
       explainer: Rebased to 100 at the start of the period, with the effect of money you paid in or took out removed. A level of 121 means a 21% return.
