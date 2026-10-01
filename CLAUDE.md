@@ -33,7 +33,7 @@ To watch the browser live, open `http://localhost:7900` or `http://localhost:444
 - `bin/brakeman` - Run security analysis
 
 ### Database
-- `bin/rails db:prepare` - Create or migrate database
+- `bin/rails db:prepare` - Create and migrate database
 - `bin/rails db:migrate` - Run pending migrations
 - `bin/rails db:rollback` - Rollback last migration
 - `bin/rails db:seed` - Load seed data
@@ -322,7 +322,7 @@ The codebase runs in two distinct modes:
 The application is built around financial data management with these key relationships:
 - **User** → has many **Accounts** → has many **Transactions**
 - **Account** types: checking, savings, credit cards, investments, crypto, loans, properties
-- **Transaction** → belongs to **Category**, has many **Tags** and **Rules**
+- **Transaction** → belongs to **Category**, can have **Tags** and **Rules**
 - **Investment accounts** → have **Holdings** → track **Securities** via **Trades**
 
 ### API Architecture
@@ -349,7 +349,7 @@ Two primary data ingestion methods:
 - Detection
   - SimpleFIN: pending via `pending: true` or `posted` blank/0 + `transacted_at`.
   - Plaid: pending via Plaid `pending: true` (stored at `extra["plaid"]["pending"]` for bank/credit transactions imported via `PlaidEntry::Processor`).
-- Storage: provider data on `Transaction#extra` (e.g. `extra["simplefin"]["pending"]`; FX uses `fx_from`, `fx_date`).
+- Storage: provider data on `Transaction#extra` (e.g., `extra["simplefin"]["pending"]`; FX uses `fx_from`, `fx_date`).
 - UI: "Pending" badge when `transaction.pending?` is true; no badge if provider omits pendings.
 - Configuration (default-on for pending)
   - SimpleFIN: `config/initializers/simplefin.rb` via `Rails.configuration.x.simplefin.*`.
@@ -377,7 +377,7 @@ Sidekiq handles asynchronous tasks:
 - Prefer `DebugLogEntry.capture(...)` over `Rails.logger.*` for provider sync/import failures, partial responses, and other support-relevant diagnostics.
 - Record support-relevant incidents in the super-admin `/settings/debug` UI rather than leaving them only in raw application logs.
 - Include `category`, `level`, `message`, `source`, `provider_key`, and structured `metadata`.
-- Attach `family` and `account_provider` whenever possible so support can filter to affected provider connections.
+- Attach `family` and `account_provider` whenever possible so support can filter to the affected provider connection.
 
 ### Frontend Architecture
 - **Hotwire Stack**: Turbo + Stimulus for reactive UI without heavy JavaScript
@@ -386,7 +386,7 @@ Sidekiq handles asynchronous tasks:
 - **Charts**: D3.js for financial visualizations (time series, donut, sankey)
 - **Styling**: Tailwind CSS v4.x with custom design system
   - Design system defined in `app/assets/tailwind/sure-design-system.css`
-  - Always use functional tokens (e.g. `text-primary` not `text-white`)
+  - Always use functional tokens (e.g., `text-primary` not `text-white`)
   - Prefer semantic HTML elements over JS components
   - Use `icon` helper for icons, never `lucide_icon` directly
 - **i18n**: All user-facing strings must use localization (i18n). Update locale files for each new or changed element.
@@ -395,8 +395,8 @@ Sidekiq handles asynchronous tasks:
 - **Key Organization**: Use hierarchical keys by feature: `accounts.index.title`, `transactions.form.amount_label`
 - **Translation Helper**: Always use `t()` helper for user-facing strings
 - **Interpolation**: Use for dynamic content: `t("users.greeting", name: user.name)`
-- **Pluralization**: Rails native pluralization: `t("transactions.count", count: @transactions.count)`
-- **Locale Files**: Store in `config/locales/en.yml` for new strings
+- **Pluralization**: Use Rails pluralization: `t("transactions.count", count: @transactions.count)`
+- **Locale Files**: Update `config/locales/en.yml` for new strings
 - **Missing Translations**: Configure to raise errors in development for missing keys
 
 ### Multi-Currency Support
@@ -406,7 +406,7 @@ Sidekiq handles asynchronous tasks:
 
 ### Security & Authentication
 - Session-based auth for web users
-- API authentication by:
+- API authentication via:
   - OAuth2 (Doorkeeper) for third-party apps
   - API keys with JWT tokens for direct API access
 - Scoped permissions system for API access
@@ -513,7 +513,7 @@ Sidekiq handles asynchronous tasks:
   <div data-toggle-target="content" class="hidden">
     <p><%= t("components.transaction_details.amount_label") %>: <%= @transaction.amount %></p>
     <p><%= t("components.transaction_details.date_label") %>: <%= @transaction.date %></p>
-    <p><%= t("components.transaction_details.category_label") %>: <%= @transaction.category %></p>
+    <p><%= t("components.transaction_details.category_label") %>: <%= @transaction.category.name %></p>
   </div>
 </div>
 ```
@@ -532,10 +532,10 @@ en:
 
 **i18n Best Practices:**
 - Organize keys by feature/component: `components.transaction_details.show_details`
-- Use descriptive key names: `show_details` not `button`
+- Use descriptive key names that indicate purpose: `show_details` not `button`
 - Group related translations together in the same namespace
 - Use interpolation for dynamic content: `t("users.welcome", name: user.name)`
-- Always update locale files when adding or changing strings
+- Always update locale files when adding new user-facing strings
 
 **Controller Best Practices:**
 - Keep controllers lightweight and simple (< 7 targets)
@@ -631,3 +631,4 @@ After every API endpoint commit, ensure:
 Full checklist and pattern: [.cursor/rules/api-endpoint-consistency.mdc](.cursor/rules/api-endpoint-consistency.mdc).
 
 To verify the implementation: `ruby test/support/verify_api_endpoint_consistency.rb`. To scan the current APIs for violations: `ruby test/support/verify_api_endpoint_consistency.rb --compliance`.
+offset
