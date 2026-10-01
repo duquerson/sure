@@ -17,7 +17,7 @@ class EventTransaction < ApplicationRecord
 
   private
     def transaction_belongs_to_events_family
-      return if event.nil? || transaction_record.nil?
+      return if event&.family.nil? || transaction_record.nil?
 
       errors.add(:transaction_record, :wrong_family) unless event.family.transactions.exists?(id: transaction_id)
     end

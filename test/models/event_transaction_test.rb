@@ -10,6 +10,15 @@ class EventTransactionTest < ActiveSupport::TestCase
     @transaction = create_transaction(account: @checking, date: Date.new(2020, 3, 20)).entryable
   end
 
+  # The event is what is invalid here (it has no family); the override must report that
+  # through validation, not raise from its own family check.
+  test "an override on an event with no family does not raise when validated" do
+    override = EventTransaction.new(event: Event.new, transaction_record: @transaction, inclusion: "included")
+
+    assert_nothing_raised { override.valid? }
+    assert_not override.event.valid?
+  end
+
   test "one override per event and transaction" do
     @event.event_transactions.create!(transaction_record: @transaction, inclusion: "included")
 

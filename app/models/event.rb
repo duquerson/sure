@@ -48,6 +48,12 @@ class Event < ApplicationRecord
       .where.not(id: event_transactions.excluded.select(:transaction_id))
   end
 
+  # Whether a transaction can count towards an event at all (a transfer, an
+  # excluded entry or a pending row cannot, whatever its date or override).
+  def countable?(transaction, user: nil)
+    reportable_transactions(user).exists?(id: transaction.id)
+  end
+
   # Pull a transaction in by hand (it may be dated outside the range).
   def include_transaction!(transaction)
     set_override!(transaction, "included")

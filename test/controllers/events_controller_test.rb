@@ -318,6 +318,32 @@ class EventsControllerTest < ActionDispatch::IntegrationTest
     assert_equal [ inside.id ], before - @event.transactions.pluck(:id)
   end
 
+  test "include and exclude refuse a transaction that cannot count towards an event, and write nothing" do
+    savings = accounts(:depository).family.accounts.create!(name: "Savings", currency: "USD", balance: 0, accountable: Depository.new)
+    create_transfer(from_account: @account, to_account: savings, amount: 500, date: @day0 + 9)
+    transfer_leg = @account.transactions.find_by!(kind: "funds_movement")
+
+    assert_no_difference "EventTransaction.count" do
+      post include_transaction_event_url(@event), params: { transaction_id: transfer_leg.id }
+      assert_redirected_to event_path(@event)
+      assert_equal I18n.t("events.include_transaction.not_countable"), flash[:alert]
+
+      post exclude_transaction_event_url(@event), params: { transaction_id: transfer_leg.id }
+      assert_redirected_to event_path(@event)
+      assert_equal I18n.t("events.exclude_transaction.not_countable"), flash[:alert]
+    end
+  end
+
+  test "reset still removes an override on a transaction that has since stopped counting" do
+    inside = txn(2)
+    @event.exclude_transaction!(inside)
+    inside.entry.update!(excluded: true)
+
+    assert_difference "@event.event_transactions.count", -1 do
+      delete reset_transaction_event_url(@event), params: { transaction_id: inside.id }
+    end
+  end
+
   test "reset drops the override" do
     inside = txn(2)
     @event.exclude_transaction!(inside)

@@ -462,11 +462,15 @@ class EventTest < ActiveSupport::TestCase
   end
 
   test "destroying a family destroys its events and their overrides" do
-    outside = txn(7)
-    @event.event_transactions.create!(transaction_record: Transaction.find(outside), inclusion: "included")
+    # A fresh family: the fixture families have users that block their own destruction.
+    doomed = Family.create!(name: "Doomed", currency: "USD")
+    account = doomed.accounts.create!(name: "Checking", currency: "USD", balance: 0, accountable: Depository.new)
+    event = doomed.events.create!(name: "Trip", start_date: @day0, end_date: @day0 + 4)
+    outside = create_transaction(account: account, date: @day0 + 9, amount: 10).entryable
+    event.event_transactions.create!(transaction_record: outside, inclusion: "included")
 
     assert_difference [ "Event.count", "EventTransaction.count" ], -1 do
-      @event.destroy!
+      doomed.destroy!
     end
   end
 

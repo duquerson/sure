@@ -41,8 +41,10 @@ en:
       destroyed: Event deleted. Its transactions are untouched.
     include_transaction:
       included: Transaction added to the event.
+      not_countable: That transaction can't count towards an event (transfers, excluded and pending transactions never do).
     exclude_transaction:
       excluded: Transaction removed from the event.
+      not_countable: That transaction can't count towards an event (transfers, excluded and pending transactions never do).
     reset_transaction:
       reset: Transaction restored to the date rule.
     show:

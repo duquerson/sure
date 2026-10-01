@@ -67,11 +67,15 @@ class EventsController < ApplicationController
   end
 
   def include_transaction
+    return redirect_to(event_path(@event), alert: t(".not_countable")) unless @event.countable?(@transaction, user: Current.user)
+
     @event.include_transaction!(@transaction)
     redirect_to event_path(@event), notice: t(".included")
   end
 
   def exclude_transaction
+    return redirect_to(event_path(@event), alert: t(".not_countable")) unless @event.countable?(@transaction, user: Current.user)
+
     @event.exclude_transaction!(@transaction)
     redirect_to event_path(@event), notice: t(".excluded")
   end

@@ -1006,6 +1006,7 @@ class ReportsControllerTest < ActionDispatch::IntegrationTest
 
     assert_response :success
     assert_select "a[href=?]", events_path
+    assert_select "a[href=?].hidden", events_path, count: 0
   end
 
   test "the reports page does not link to events without preview access" do

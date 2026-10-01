@@ -19,7 +19,7 @@
 
       <%# Events (preview) %>
       <% if preview_features_enabled? %>
-        <%= render DS::Link.new(text: t("reports.index.events_link"), variant: "outline", icon: "calendar-range", href: events_path, class: "hidden sm:inline-flex") %>
+        <%= render DS::Link.new(text: t("reports.index.events_link"), variant: "outline", icon: "calendar-range", href: events_path) %>
       <% end %>
 
       <%# Print Report Button %>
