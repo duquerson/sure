@@ -93,14 +93,14 @@ class Portfolio::Income
       daily_returns.rows
     end
 
-    # nil for a month whose income nets to zero, which is a month that paid
-    # nothing. A month that nets NEGATIVE (a reversed dividend larger than that
-    # month's payments) is kept and keeps its sign: dropping it would leave the
-    # buckets short of #total.
+    # nil for a month in which no income row is non-zero, which is a month that
+    # paid nothing. A month with activity is kept even when it nets to zero (a
+    # payout and its reversal) or negative (a reversal larger than that month's
+    # payments): dropping it would report an active month as absent, and a
+    # negative one would leave the buckets short of #total.
     def build_bucket(month, month_rows)
-      amount = month_rows.sum(BigDecimal(0), &:income)
-      return nil if amount.zero?
+      return nil if month_rows.all? { |row| row.income.zero? }
 
-      Bucket.new(month: month, amount: amount)
+      Bucket.new(month: month, amount: month_rows.sum(BigDecimal(0), &:income))
     end
 end

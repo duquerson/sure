@@ -596,8 +596,11 @@ class Portfolio::SectionRegistry
     end
 
     # The bar payload, in the shape and for the reasons realized_gains_bars
-    # gives. Income is the one series; the chart's second ("expense") is
-    # zero rather than absent because the controller reads both keys.
+    # gives. The chart draws positive heights only, so a month that netted
+    # NEGATIVE (a reversal larger than that month's payments) goes on the second
+    # series as a magnitude rather than being dropped: income less reversals is
+    # then the total the drivers table reports. For an ordinary month the second
+    # series is zero.
     def income_bars
       @income_bars ||= begin
         buckets = income[:buckets]
@@ -608,8 +611,8 @@ class Portfolio::SectionRegistry
             date: bucket[:month],
             label: I18n.l(bucket[:month], format: :short_month_year),
             short_label: I18n.l(bucket[:month], format: short_format),
-            income: bucket[:amount].to_f.round(2),
-            expense: 0
+            income: [ bucket[:amount], 0 ].max.to_f.round(2),
+            expense: [ -bucket[:amount], 0 ].max.to_f.round(2)
           }
         end
       end

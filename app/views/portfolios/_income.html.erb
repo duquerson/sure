@@ -30,13 +30,21 @@
         <span class="w-2 h-2 rounded-full bg-success"></span>
         <%= t("portfolios.income.chart_label") %>
       </span>
+      <%# Only when a month netted negative, so the legend names what is drawn. %>
+      <% if bars.any? { |bar| bar[:expense].positive? } %>
+        <span class="flex items-center gap-1.5 text-xs text-secondary">
+          <span class="w-2 h-2 rounded-full bg-subdued"></span>
+          <%= t("portfolios.income.reversals") %>
+        </span>
+      <% end %>
     </div>
 
     <div class="w-full h-44 privacy-sensitive"
       data-controller="bar-chart"
       data-bar-chart-data-value="<%= bars.to_json %>"
       data-bar-chart-currency-value="<%= currency %>"
-      data-bar-chart-income-label-value="<%= t("portfolios.income.chart_label") %>">
+      data-bar-chart-income-label-value="<%= t("portfolios.income.chart_label") %>"
+      data-bar-chart-expense-label-value="<%= t("portfolios.income.reversals") %>">
     </div>
   <% else %>
     <%# Nothing paid in the period: say so and stop. A zero total over an empty
@@ -45,7 +53,7 @@
         year. %>
     <div class="px-4 space-y-1">
       <p class="text-sm text-secondary"><%= t("portfolios.income.no_income", period: period.label) %></p>
-      <% if trailing[:total].positive? %>
+      <% unless trailing[:total].zero? %>
         <p class="text-sm text-secondary tabular-nums privacy-sensitive">
           <%= t("portfolios.income.trailing_total") %>: <%= format_money(Money.new(trailing[:total], currency)) %>
         </p>
@@ -64,7 +72,7 @@
         <%= format_money(Money.new(income[:fees], currency)) %>
       </p>
       <% if income[:fee_ratio] %>
-        <p class="text-xs text-secondary tabular-nums" title="<%= t("portfolios.income.fee_ratio_hint") %>">
+        <p class="text-xs text-secondary tabular-nums privacy-sensitive" title="<%= t("portfolios.income.fee_ratio_hint") %>">
           <%= t("portfolios.income.fee_ratio", ratio: number_to_percentage(income[:fee_ratio] * 100, precision: 2)) %>
         </p>
       <% end %>

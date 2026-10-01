@@ -121,6 +121,7 @@ en:
       fees: Fees in %{period}
       no_income: No dividends or interest were paid in %{period}.
       period_total: Dividends and interest in %{period}
+      reversals: Reversals
       trailing_total: Last 12 months
     index_chart:
       explainer: Rebased to 100 at the start of the period, with the effect of money you paid in or took out removed. A level of 121 means a 21% return.

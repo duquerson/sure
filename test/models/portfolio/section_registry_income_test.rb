@@ -72,6 +72,24 @@ class Portfolio::SectionRegistryIncomeTest < ActiveSupport::TestCase
     assert_equal "Sep", bars.first[:short_label]
   end
 
+  # The chart draws positive heights only, so a month that netted negative has
+  # to travel on the other series or it vanishes and the bars stop adding up to
+  # the drivers table. Reversals are rare; this is the case that was dropped.
+  test "a month that netted negative is drawn on the second series, not lost" do
+    pay Date.new(2026, 8, 5), 50
+    pay Date.new(2026, 9, 2), -8
+    lay_history
+    @period = Period.custom(start_date: @as_of - 60, end_date: @as_of)
+
+    bars = income_locals[:bars]
+
+    assert_equal [ 50.0, 0.0 ], bars.map { |bar| bar[:income] }
+    assert_equal [ 0.0, 8.0 ], bars.map { |bar| bar[:expense] }
+    assert_equal income_locals[:income][:total],
+                 bars.sum(BigDecimal(0)) { |bar| BigDecimal(bar[:income].to_s) - BigDecimal(bar[:expense].to_s) },
+                 "income less reversals is the total the drivers table reports"
+  end
+
   # Visible and empty, not absent: see the comment on the registry entry.
   test "a period with no income still shows the section, with no bars" do
     lay_history

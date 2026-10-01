@@ -468,8 +468,40 @@ class PortfoliosControllerTest < ActionDispatch::IntegrationTest
     assert_select "[data-section-key=income] #portfolio-income" do
       assert_select "[data-controller=bar-chart][data-bar-chart-data-value*=?]", "42.5"
       assert_select "p", text: /#{Regexp.escape(ApplicationController.helpers.format_money(Money.new(42.5, "USD")))}/
-      assert_select "p", text: /0\.20%/, message: "4 of 2,000 is a fifth of a percent"
+      assert_select "p.privacy-sensitive", text: /0\.20%/,
+        message: "4 of 2,000 is a fifth of a percent, and it blurs with the figures around it"
     end
+    assert_select "#portfolio-income span", text: /#{Regexp.escape(I18n.t("portfolios.income.reversals"))}/, count: 0,
+      message: "no month netted negative, so the legend has nothing to name"
+  end
+
+  test "the income legend names reversals when a month netted negative" do
+    Portfolio::Performance.any_instance.stubs(:income).returns(
+      buckets: [ { month: Date.new(2026, 3, 1), amount: BigDecimal("-8") } ],
+      total: BigDecimal("-8"), fees: BigDecimal(0),
+      average_value: BigDecimal("2000"), fee_ratio: nil
+    )
+
+    get portfolio_path
+
+    assert_response :success
+    assert_select "#portfolio-income span", text: /#{Regexp.escape(I18n.t("portfolios.income.reversals"))}/
+    assert_select "#portfolio-income [data-controller=bar-chart][data-bar-chart-expense-label-value=?]",
+      I18n.t("portfolios.income.reversals")
+  end
+
+  # A net-negative year is a real figure (reversals larger than payouts), and
+  # hiding it beside "nothing was paid" would state a total that is not true.
+  test "the income section shows a negative trailing total when the period paid nothing" do
+    Portfolio::Performance.any_instance.stubs(:income).returns(
+      buckets: [], total: BigDecimal("-8"), fees: BigDecimal(0),
+      average_value: BigDecimal("2000"), fee_ratio: nil
+    )
+
+    get portfolio_path
+
+    assert_response :success
+    assert_select "#portfolio-income p", text: /#{Regexp.escape(I18n.t("portfolios.income.trailing_total"))}/
   end
 
   test "the income section says so when nothing was paid, and omits the fee line" do

@@ -35,7 +35,12 @@ class Portfolio::IncomeTest < ActiveSupport::TestCase
     income_transaction account: @account, date: @mar, amount: 5, label: "Interest"
     lay_flat_balances cash_by_date: { @mar => 35 }
 
-    assert_equal BigDecimal(35), income_for.total
+    income = income_for
+
+    assert_equal [ Date.new(2026, 3, 1) ], income.buckets.map(&:month)
+    assert_equal BigDecimal(35), income.buckets.first.amount,
+                 "both labels land in the one March bucket; `total` alone would pass with two buckets"
+    assert_equal BigDecimal(35), income.total
   end
 
   # Neither shape is a contribution. The classifier already guarantees it; this
@@ -68,6 +73,34 @@ class Portfolio::IncomeTest < ActiveSupport::TestCase
     assert_equal [ Date.new(2026, 2, 1), Date.new(2026, 4, 1) ], income.buckets.map(&:month),
                  "March earned nothing and has no bar"
     assert_equal [ BigDecimal(10), BigDecimal(20) ], income.buckets.map(&:amount)
+  end
+
+  # A reversal is a dividend row with the opposite sign. A month that paid 10
+  # and had 10 clawed back was an active month, and a chart that omits it says
+  # nothing happened. The bucket stays, at zero, and the buckets still add up to
+  # the total.
+  test "a month whose payments and reversals net to zero is kept" do
+    income_trade account: @account, date: @mar, amount: 10
+    income_trade account: @account, date: @mar + 1, amount: -10
+    lay_flat_balances cash_by_date: { @mar => 10, @mar + 1 => -10 }
+
+    income = income_for
+
+    assert_equal [ Date.new(2026, 3, 1) ], income.buckets.map(&:month)
+    assert_equal BigDecimal(0), income.buckets.first.amount
+    assert income.any?, "a month with activity is not a period with no income"
+    assert_equal income.total, income.buckets.sum(BigDecimal(0), &:amount)
+  end
+
+  test "a month that nets negative keeps its sign, so the buckets still add up to the total" do
+    income_trade account: @account, date: @feb, amount: 5
+    income_trade account: @account, date: @mar, amount: -8
+    lay_flat_balances cash_by_date: { @feb => 5, @mar => -8 }
+
+    income = income_for
+
+    assert_equal [ BigDecimal(5), BigDecimal(-8) ], income.buckets.map(&:amount)
+    assert_equal BigDecimal(-3), income.total
   end
 
   test "a period with no income has no buckets and a zero total" do

@@ -224,11 +224,20 @@ class Portfolio::Performance
         max_drawdown: withhold_time_weighted ? nil : drawdown(returns),
         index_series: withhold_time_weighted ? [] : rebased_index(returns),
         drivers: drivers.to_h,
-        income: Portfolio::Income.new(daily_returns).to_h,
+        income: income_metrics(rate_missing),
         rate_missing: rate_missing,
         suppressed_dates: rows.select(&:suppressed).map(&:date),
         day_count: rows.size
       }
+    end
+
+    # The income figures are money and are reported whatever happens, as the
+    # drivers are. The fee ratio is a percentage, so it is withheld on R13's
+    # terms: with a rate missing, fees and value cover only the currencies that
+    # converted, and their ratio would read as the whole portfolio's.
+    def income_metrics(rate_missing)
+      income = Portfolio::Income.new(daily_returns).to_h
+      rate_missing ? income.merge(fee_ratio: nil) : income
     end
 
     # R3.
