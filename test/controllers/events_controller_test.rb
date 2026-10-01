@@ -153,12 +153,28 @@ class EventsControllerTest < ActionDispatch::IntegrationTest
   test "show does not reveal transactions on accounts the viewer cannot see" do
     private_account = Account.create!(family: @user.family, owner: users(:family_member), name: "Member private", currency: "USD", balance: 0, accountable: Depository.new)
     create_transaction(account: private_account, date: @day0 + 1, amount: 321, name: "Members secret spend")
+    create_transaction(account: private_account, date: @day0 + 6, amount: 77, name: "Members nearby spend")
 
     get event_url(@event)
 
     assert_response :success
     assert_no_match(/Members secret spend/, response.body)
+    assert_no_match(/Members nearby spend/, response.body)
     assert_no_match(/\$321\.00/, response.body)
+  end
+
+  test "show does not list a hidden account's transaction among those removed by hand" do
+    private_account = Account.create!(family: @user.family, owner: users(:family_member), name: "Member private", currency: "USD", balance: 0, accountable: Depository.new)
+    hidden = create_transaction(account: private_account, date: @day0 + 1, amount: 321, name: "Members removed spend").entryable
+    visible = txn(2, name: "Own removed spend")
+    @event.exclude_transaction!(hidden)
+    @event.exclude_transaction!(visible)
+
+    get event_url(@event)
+
+    assert_response :success
+    assert_match(/Own removed spend/, response.body)
+    assert_no_match(/Members removed spend/, response.body)
   end
 
   # Family scoping -------------------------------------------------------

@@ -138,6 +138,7 @@ class EventTest < ActiveSupport::TestCase
     create_transaction(account: usd, date: @day0 + 1, amount: 100, currency: "USD", name: "In dollars")
 
     assert_equal Money.new(60, "EUR"), @event.true_cost
+    assert_equal Money.new(60, "EUR"), @event.daily_series.sum(&:amount)
   end
 
   # What does not count --------------------------------------------------
@@ -198,6 +199,19 @@ class EventTest < ActiveSupport::TestCase
 
     assert_equal Money.new(0, "USD"), @event.true_cost - before
     assert_not_includes @event.transactions.pluck(:id), transfer_leg.id
+  end
+
+  test "internal investment movements do not count towards the event" do
+    txn(1, amount: 40)
+    sweep = Transaction.find(txn(2, amount: 90))
+    before_cost = @event.true_cost
+    before_ids = @event.transactions.pluck(:id)
+    assert_includes before_ids, sweep.id
+
+    sweep.update_columns(investment_activity_label: "Sweep In")
+
+    assert_equal Money.new(-90, "USD"), @event.true_cost - before_cost
+    assert_equal [ sweep.id ], before_ids - @event.transactions.pluck(:id)
   end
 
   test "the transaction list and the true cost agree" do
@@ -352,18 +366,22 @@ class EventTest < ActiveSupport::TestCase
   # Candidates to add ----------------------------------------------------
 
   test "nearby transactions are those just outside the range that the event does not hold" do
-    inside = txn(2)
+    first_day = txn(0)
+    last_day = txn(4)
     just_before = txn(-1)
     just_after = txn(5)
-    far_before = txn(-30)
-    far_after = txn(40)
+    window_start = txn(-14)
+    window_end = txn(18)
+    before_window = txn(-15)
+    after_window = txn(19)
 
     ids = @event.nearby_transactions(within: 14).pluck(:id)
 
-    assert_equal [ just_before, just_after ].sort, ids.sort
-    assert_not_includes ids, inside
-    assert_not_includes ids, far_before
-    assert_not_includes ids, far_after
+    assert_equal [ just_before, just_after, window_start, window_end ].sort, ids.sort
+    assert_not_includes ids, first_day
+    assert_not_includes ids, last_day
+    assert_not_includes ids, before_window
+    assert_not_includes ids, after_window
   end
 
   test "a transaction already pulled in is no longer a candidate" do
