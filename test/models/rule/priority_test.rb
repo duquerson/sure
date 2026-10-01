@@ -159,6 +159,48 @@ class Rule::PriorityTest < ActiveSupport::TestCase
     ApplyAllRulesJob.perform_now(@family, active_only: true, ignore_attribute_locks: false)
   end
 
+  test "a rule that fails does not stop the ones after it, and the job still fails so it can be retried" do
+    first = rule_setting(@groceries, name: "first", active: true)
+    second = rule_setting(@dining, name: "second", active: true)
+    RuleJob.stubs(:perform_now).with(first, anything).raises(ActiveRecord::StatementInvalid.new("transient"))
+    RuleJob.expects(:perform_now).with(second, anything).once
+
+    assert_raises(ActiveRecord::StatementInvalid) do
+      ApplyAllRulesJob.perform_now(@family, active_only: true, ignore_attribute_locks: false)
+    end
+  end
+
+  test "a regex timeout is final: later rules run and the job does not fail" do
+    first = rule_setting(@groceries, name: "first", active: true)
+    second = rule_setting(@dining, name: "second", active: true)
+    RuleJob.stubs(:perform_now).with(first, anything).raises(Rule::SafeRegex::TimeoutError)
+    RuleJob.expects(:perform_now).with(second, anything).once
+
+    assert_nothing_raised do
+      ApplyAllRulesJob.perform_now(@family, active_only: true, ignore_attribute_locks: false)
+    end
+  end
+
+  # Tests share one connection, so a second session has to be opened by hand for the
+  # lock to mean anything.
+  test "passes for one family are serialised by a lock the job holds while it runs" do
+    rule_setting(@groceries, active: true)
+    config = ActiveRecord::Base.connection_db_config.configuration_hash
+    other_session = PG.connect(host: config[:host], port: config[:port], dbname: config[:database], user: config[:username])
+    key = ApplyAllRulesJob.lock_key(@family)
+    try_lock = -> { other_session.exec_params("SELECT pg_try_advisory_lock($1)", [ key ]).getvalue(0, 0) == "t" }
+
+    held_during = nil
+    RuleJob.stubs(:perform_now).with { held_during = !try_lock.call; true }
+
+    ApplyAllRulesJob.perform_now(@family, active_only: true, ignore_attribute_locks: false)
+
+    assert held_during, "another session could take the family's lock while the pass was running"
+    assert try_lock.call, "the lock was still held after the pass finished"
+  ensure
+    other_session&.close
+  end
+
   test "the post-sync pass enqueues one ordered job, not one job per rule" do
     rule_setting(@groceries, active: true)
     rule_setting(@dining, active: true)

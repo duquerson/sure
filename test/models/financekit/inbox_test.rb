@@ -248,12 +248,12 @@ class Financekit::InboxTest < ActiveSupport::TestCase
     batch, = accept_batch
     assert Financekit::Processor.new(@item).apply_next!.present?
 
-    rule_jobs_before = enqueued_jobs.count { |job| job["job_class"] == "RuleJob" }
-    ordered_before = enqueued_jobs.count { |job| job["job_class"] == "ApplyAllRulesJob" }
+    rule_jobs_before = enqueued_jobs.count { |job| job[:job] == RuleJob }
+    ordered_before = enqueued_jobs.count { |job| job[:job] == ApplyAllRulesJob }
     Financekit::Downstream.new(@item, FinancekitBatch.where(id: batch.id)).perform!
 
-    assert_equal 1, enqueued_jobs.count { |job| job["job_class"] == "ApplyAllRulesJob" } - ordered_before
-    assert_equal rule_jobs_before, enqueued_jobs.count { |job| job["job_class"] == "RuleJob" }
+    assert_equal 1, enqueued_jobs.count { |job| job[:job] == ApplyAllRulesJob } - ordered_before
+    assert_equal rule_jobs_before, enqueued_jobs.count { |job| job[:job] == RuleJob }
   end
 
   test "a failure writing publisher health leaves the batches for recovery" do

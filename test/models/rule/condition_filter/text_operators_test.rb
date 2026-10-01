@@ -79,10 +79,13 @@ class Rule::ConditionFilter::TextOperatorsTest < ActiveSupport::TestCase
     assert_not_includes matched, miss.name
   end
 
+  # The stored name is collapsed to single spaces for text operators, so a pattern
+  # that spells two spaces can only match if the pattern itself is left untouched.
   test "matches_regex value is not whitespace-normalised" do
-    create_transaction(account: @account, name: "A B")
+    create_transaction(account: @account, name: "A  B")
 
-    assert_equal [ "A B" ], matching_names(condition_type: "transaction_name", operator: "matches_regex", value: "A B")
+    assert_empty matching_names(condition_type: "transaction_name", operator: "matches_regex", value: "A  B")
+    assert_equal [ "A  B" ], matching_names(condition_type: "transaction_name", operator: "matches_regex", value: "A B")
   end
 
   test "the text type offers the new operators" do

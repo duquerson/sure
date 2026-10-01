@@ -695,7 +695,7 @@ RSpec.configure do |config|
           },
           Rule: {
             type: :object,
-            required: %w[id resource_type active conditions actions created_at updated_at],
+            required: %w[id resource_type active priority conditions actions created_at updated_at],
             properties: {
               id: { type: :string, format: :uuid },
               name: { type: :string, nullable: true },

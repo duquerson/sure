@@ -92,7 +92,11 @@ class Rule::SafeRegex
       nil
     rescue TimeoutError
       :too_complex
-    rescue ActiveRecord::StatementInvalid
+    rescue ActiveRecord::StatementInvalid => e
+      # Only Postgres' own verdict on the pattern (SQLSTATE 2201B) is a bad pattern;
+      # a lost connection or an aborted transaction is not the user's mistake.
+      raise unless e.cause.is_a?(PG::InvalidRegularExpression)
+
       :invalid
     end
 end

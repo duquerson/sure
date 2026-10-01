@@ -97,6 +97,22 @@ class Rule::RegexExecutionTest < ActiveSupport::TestCase
     assert_equal @category, @miss.reload.transaction.category
   end
 
+  test "an email-notification action whose baseline times out is still created, and the rule is switched off" do
+    rule = regex_rule("amzn")
+    rule.update!(active: true)
+    Rule::SafeRegex.stubs(:with_timeout).raises(Rule::SafeRegex::TimeoutError)
+
+    # after_create_commit does not fire under transactional tests, so the seeding
+    # path is invoked directly (as send_email_notification_test.rb does).
+    action = rule.actions.create!(action_type: "send_email_notification")
+    assert_nothing_raised { action.send(:seed_notification_baseline) }
+
+    # No baseline was recorded, so leaving the rule on would email every past match.
+    assert_not rule.reload.active?
+    assert_equal 0, NotificationDelivery.where(rule_id: rule.id).count
+    assert action.persisted?
+  end
+
   private
     def regex_rule(pattern, name: nil)
       Rule.create!(

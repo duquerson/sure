@@ -47,6 +47,12 @@ class Rule::SafeRegexTest < ActiveSupport::TestCase
     assert_equal :invalid, Rule::SafeRegex.error_for("^(a{1,255}){1,255}(b)")
   end
 
+  test "a database error that is not a regex error is not reported as an invalid pattern" do
+    ActiveRecord::Base.connection.stubs(:select_value).raises(ActiveRecord::StatementInvalid.new("connection lost"))
+
+    assert_raises(ActiveRecord::StatementInvalid) { Rule::SafeRegex.error_for("abc") }
+  end
+
   test "a failed probe inside an open transaction does not poison it" do
     ActiveRecord::Base.transaction do
       assert_equal :invalid, Rule::SafeRegex.error_for("(")
