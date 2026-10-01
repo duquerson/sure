@@ -186,7 +186,10 @@ class Rule::PriorityTest < ActiveSupport::TestCase
   test "passes for one family are serialised by a lock the job holds while it runs" do
     rule_setting(@groceries, active: true)
     config = ActiveRecord::Base.connection_db_config.configuration_hash
-    other_session = PG.connect(host: config[:host], port: config[:port], dbname: config[:database], user: config[:username])
+    other_session = PG.connect(
+      host: config[:host], port: config[:port], dbname: config[:database],
+      user: config[:username], password: config[:password]
+    )
     key = ApplyAllRulesJob.lock_key(@family)
     try_lock = -> { other_session.exec_params("SELECT pg_try_advisory_lock($1)", [ key ]).getvalue(0, 0) == "t" }
 
