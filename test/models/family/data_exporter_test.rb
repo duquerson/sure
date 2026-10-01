@@ -445,6 +445,17 @@ class Family::DataExporterTest < ActiveSupport::TestCase
     end
   end
 
+  test "exports a rule's priority in NDJSON so the run order survives a round trip" do
+    @rule.update_columns(priority: 7)
+
+    Zip::File.open_buffer(@exporter.generate_export) do |zip|
+      rule_data = zip.read("all.ndjson").split("\n").map { |line| JSON.parse(line) }
+        .find { |line| line["type"] == "Rule" && line["data"]["name"] == "Test Rule" }
+
+      assert_equal 7, rule_data["data"]["priority"]
+    end
+  end
+
   test "exports rule conditions with proper structure" do
     zip_data = @exporter.generate_export
 

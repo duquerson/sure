@@ -5,6 +5,74 @@ class RulesControllerTest < ActionDispatch::IntegrationTest
     sign_in @user = users(:family_admin)
   end
 
+  test "index lists rules in priority order by default" do
+    family = @user.family
+    family.rules.destroy_all
+    later = family.rules.create!(resource_type: "transaction", name: "Zebra", actions: [ Rule::Action.new(action_type: "exclude_transaction") ])
+    earlier = family.rules.create!(resource_type: "transaction", name: "Apple", actions: [ Rule::Action.new(action_type: "exclude_transaction") ])
+    later.update_columns(priority: 1)
+    earlier.update_columns(priority: 2)
+
+    get rules_url
+
+    assert_response :success
+    assert_operator response.body.index("Zebra"), :<, response.body.index("Apple")
+  end
+
+  test "index still sorts by name on request and then offers no reordering" do
+    get rules_url(sort_by: "name")
+
+    assert_response :success
+    assert_select "a[href*='move']", count: 0
+  end
+
+  test "index offers reordering controls in priority order, except where they would do nothing" do
+    family = @user.family
+    family.rules.destroy_all
+    first = family.rules.create!(resource_type: "transaction", name: "first", actions: [ Rule::Action.new(action_type: "exclude_transaction") ])
+    second = family.rules.create!(resource_type: "transaction", name: "second", actions: [ Rule::Action.new(action_type: "exclude_transaction") ])
+
+    get rules_url
+
+    assert_select "a[data-turbo-method='patch'][href='#{move_rule_path(first, direction: "down")}']", count: 1
+    assert_select "a[data-turbo-method='patch'][href='#{move_rule_path(second, direction: "up")}']", count: 1
+    assert_select "a[href='#{move_rule_path(first, direction: "up")}']", count: 0
+    assert_select "a[href='#{move_rule_path(second, direction: "down")}']", count: 0
+  end
+
+  test "move changes the order and redirects back to the list" do
+    family = @user.family
+    family.rules.destroy_all
+    first = family.rules.create!(resource_type: "transaction", name: "first", actions: [ Rule::Action.new(action_type: "exclude_transaction") ])
+    second = family.rules.create!(resource_type: "transaction", name: "second", actions: [ Rule::Action.new(action_type: "exclude_transaction") ])
+
+    patch move_rule_url(second, direction: "up")
+
+    assert_redirected_to rules_url
+    assert_equal [ second, first ], family.rules.prioritised.to_a
+  end
+
+  test "move ignores a direction it does not know" do
+    family = @user.family
+    family.rules.destroy_all
+    first = family.rules.create!(resource_type: "transaction", name: "first", actions: [ Rule::Action.new(action_type: "exclude_transaction") ])
+    second = family.rules.create!(resource_type: "transaction", name: "second", actions: [ Rule::Action.new(action_type: "exclude_transaction") ])
+
+    assert_no_changes -> { family.rules.prioritised.map(&:id) } do
+      patch move_rule_url(second, direction: "sideways")
+    end
+
+    assert_redirected_to rules_url
+  end
+
+  test "move cannot reach another family's rule" do
+    other = families(:empty).rules.create!(resource_type: "transaction", actions: [ Rule::Action.new(action_type: "exclude_transaction") ])
+
+    patch move_rule_url(other, direction: "down")
+
+    assert_response :not_found
+  end
+
   test "should get new" do
     get new_rule_url(resource_type: "transaction")
     assert_response :success

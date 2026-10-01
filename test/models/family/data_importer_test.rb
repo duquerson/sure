@@ -1883,6 +1883,39 @@ class Family::DataImporterTest < ActiveSupport::TestCase
     assert_equal category.id, action.value
   end
 
+  test "imports a rule's priority and keeps the exported run order" do
+    rule_data = ->(name, priority) {
+      data = {
+        name: name, resource_type: "transaction", active: true,
+        conditions: [ { condition_type: "transaction_name", operator: "like", value: name } ],
+        actions: [ { action_type: "exclude_transaction" } ]
+      }
+      data[:priority] = priority unless priority.nil?
+      { type: "Rule", version: 1, data: data.merge(id: SecureRandom.uuid) }
+    }
+
+    Family::DataImporter.new(@family, build_ndjson([ rule_data.call("Later", 9), rule_data.call("Sooner", 3) ])).import!
+
+    assert_equal [ "Sooner", "Later" ], @family.rules.prioritised.pluck(:name)
+    assert_equal [ 3, 9 ], @family.rules.prioritised.pluck(:priority)
+  end
+
+  test "imports rules without a priority at the end of the run order, in file order" do
+    rule_data = ->(name) {
+      { type: "Rule", version: 1, data: {
+        id: SecureRandom.uuid, name: name, resource_type: "transaction", active: true,
+        conditions: [ { condition_type: "transaction_name", operator: "like", value: name } ],
+        actions: [ { action_type: "exclude_transaction" } ]
+      } }
+    }
+
+    Family::DataImporter.new(@family, build_ndjson([ rule_data.call("One"), rule_data.call("Two") ])).import!
+
+    imported = @family.rules.prioritised.where(name: [ "One", "Two" ]).pluck(:name)
+    assert_equal [ "One", "Two" ], imported
+    assert_equal imported.size, @family.rules.where(name: [ "One", "Two" ]).pluck(:priority).uniq.size
+  end
+
   test "imports transaction_tag rule condition by remapping the tag name to an id" do
     ndjson = build_ndjson([
       {

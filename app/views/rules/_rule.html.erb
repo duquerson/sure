@@ -1,4 +1,4 @@
-<%# locals: (rule:) %>
+<%# locals: (rule:, reorderable: false, first_rule_id: nil, last_rule_id: nil) %>
 <div id="<%= dom_id(rule) %>" class="flex justify-between items-center p-4 <%= rule.active? ? "text-primary" : "text-secondary" %>">
 
   <div class="text-sm space-y-1.5">
@@ -63,6 +63,16 @@
     </div>
   </div>
   <div class="flex items-center gap-4">
+    <% if reorderable %>
+      <div class="flex items-center">
+        <% unless rule.id == first_rule_id %>
+          <%= render DS::Link.new(variant: "icon", icon: "arrow-up", size: :sm, href: move_rule_path(rule, direction: "up"), method: :patch, title: t(".move_up")) %>
+        <% end %>
+        <% unless rule.id == last_rule_id %>
+          <%= render DS::Link.new(variant: "icon", icon: "arrow-down", size: :sm, href: move_rule_path(rule, direction: "down"), method: :patch, title: t(".move_down")) %>
+        <% end %>
+      </div>
+    <% end %>
     <%= styled_form_with model: rule, namespace: "rule_#{rule.id}", data: { controller: "auto-submit-form" } do |f| %>
       <%= f.toggle :active, { data: { auto_submit_form_target: "auto" } } %>
     <% end %>

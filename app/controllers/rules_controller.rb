@@ -1,17 +1,20 @@
 class RulesController < ApplicationController
   include StreamExtensions
 
-  before_action :set_rule, only: [  :edit, :update, :destroy, :apply, :confirm ]
+  before_action :set_rule, only: [  :edit, :update, :destroy, :apply, :confirm, :move ]
 
   def index
-    @sort_by = params[:sort_by] || "name"
+    @sort_by = params[:sort_by] || "priority"
     @direction = params[:direction] || "asc"
 
-    allowed_columns = [ "name", "updated_at" ]
-    @sort_by = "name" unless allowed_columns.include?(@sort_by)
+    allowed_columns = [ "priority", "name", "updated_at" ]
+    @sort_by = "priority" unless allowed_columns.include?(@sort_by)
     @direction = "asc" unless [ "asc", "desc" ].include?(@direction)
 
-    @rules = Current.family.rules.includes(conditions: :sub_conditions).order(@sort_by => @direction)
+    rules = Current.family.rules.includes(conditions: :sub_conditions)
+    # Priority is the order rules run in, so it is always shown oldest-first;
+    # reversing it would make the arrows on each row point the wrong way.
+    @rules = @sort_by == "priority" ? rules.prioritised : rules.order(@sort_by => @direction)
 
     # Fetch recent rule runs with pagination
     recent_runs_scope = RuleRun
@@ -82,6 +85,12 @@ class RulesController < ApplicationController
     else
       render :edit, status: :unprocessable_entity
     end
+  end
+
+  def move
+    @rule.move(params[:direction]) if Rule::MOVE_DIRECTIONS.map(&:to_s).include?(params[:direction])
+
+    redirect_to rules_path
   end
 
   def destroy

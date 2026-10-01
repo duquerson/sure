@@ -669,6 +669,7 @@ Rails.application.routes.draw do
     member do
       get :confirm
       post :apply
+      patch :move
     end
 
     collection do

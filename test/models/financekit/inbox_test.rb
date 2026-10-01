@@ -242,6 +242,20 @@ class Financekit::InboxTest < ActiveSupport::TestCase
     assert_not_nil batch.reload.downstream_completed_at
   end
 
+  test "downstream work queues one ordered rules pass for active rules, not a job per rule" do
+    @item.family.rules.create!(resource_type: "transaction", active: true, actions: [ Rule::Action.new(action_type: "exclude_transaction") ])
+    @item.family.rules.create!(resource_type: "transaction", active: true, actions: [ Rule::Action.new(action_type: "exclude_transaction") ])
+    batch, = accept_batch
+    assert Financekit::Processor.new(@item).apply_next!.present?
+
+    rule_jobs_before = enqueued_jobs.count { |job| job["job_class"] == "RuleJob" }
+    ordered_before = enqueued_jobs.count { |job| job["job_class"] == "ApplyAllRulesJob" }
+    Financekit::Downstream.new(@item, FinancekitBatch.where(id: batch.id)).perform!
+
+    assert_equal 1, enqueued_jobs.count { |job| job["job_class"] == "ApplyAllRulesJob" } - ordered_before
+    assert_equal rule_jobs_before, enqueued_jobs.count { |job| job["job_class"] == "RuleJob" }
+  end
+
   test "a failure writing publisher health leaves the batches for recovery" do
     batch, = accept_batch
     assert Financekit::Processor.new(@item).apply_next!.present?

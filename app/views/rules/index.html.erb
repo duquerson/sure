@@ -48,6 +48,9 @@
 <% end %>
 <div class="bg-container rounded-xl shadow-border-xs p-4">
   <% if @rules.any? %>
+    <% if @sort_by == "priority" %>
+      <p class="text-sm text-secondary px-1 pb-3"><%= t(".priority_hint") %></p>
+    <% end %>
     <div class="bg-container-inset rounded-xl">
       <div class="flex justify-between px-4 py-2 text-xs uppercase">
         <div class="flex items-center gap-1.5 font-medium text-secondary">
@@ -59,24 +62,30 @@
           <span class="text-secondary"><%= t(".sort_by") %></span>
           <%= form_with url: rules_path, method: :get, local: true, class: "flex items-center", data: { controller: "auto-submit-form" } do |form| %>
             <%= form.select :sort_by,
-                      options_for_select([[t(".sort_name"), "name"], [t(".sort_updated_at"), "updated_at"]], @sort_by),
+                      options_for_select([[t(".sort_priority"), "priority"], [t(".sort_name"), "name"], [t(".sort_updated_at"), "updated_at"]], @sort_by),
                       {},
                       class: "min-w-[120px] bg-transparent rounded border-none cursor-pointer text-primary uppercase text-xs w-auto",
                       data: { auto_submit_form_target: "auto", autosubmit_trigger_event: "change" } %>
             <%= form.hidden_field :direction, value: @direction %>
           <% end %>
-          <%= render DS::Link.new(
-            href: rules_path(direction: @direction == "asc" ? "desc" : "asc", sort_by: @sort_by),
-            variant: "icon",
-            icon: "arrow-up-down",
-            size: :sm,
-            title: t(".toggle_sort_direction")
-          ) %>
+          <% unless @sort_by == "priority" %>
+            <%= render DS::Link.new(
+              href: rules_path(direction: @direction == "asc" ? "desc" : "asc", sort_by: @sort_by),
+              variant: "icon",
+              icon: "arrow-up-down",
+              size: :sm,
+              title: t(".toggle_sort_direction")
+            ) %>
+          <% end %>
         </div>
       </div>
       <div class="p-1">
         <div class="flex flex-col bg-container rounded-lg shadow-border-xs">
-          <%= render partial: "rule", collection: @rules, spacer_template: "shared/ruler" %>
+          <% rules = @rules.to_a %>
+          <% rules.each_with_index do |rule, index| %>
+            <%= render "shared/ruler" if index.positive? %>
+            <%= render "rule", rule: rule, reorderable: @sort_by == "priority", first_rule_id: rules.first.id, last_rule_id: rules.last.id %>
+          <% end %>
         </div>
       </div>
     </div>

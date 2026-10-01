@@ -1387,6 +1387,8 @@ class Family::DataImporter
           active: data["active"] || false,
           effective_date: data["effective_date"].present? ? Date.parse(data["effective_date"].to_s) : nil
         )
+        # Older exports carry no priority; such a rule is appended to the run order.
+        rule.priority = data["priority"].to_i if data["priority"].to_i.positive?
 
         rule.conditions.destroy_all unless created
         rule.actions.destroy_all unless created

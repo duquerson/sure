@@ -702,6 +702,7 @@ RSpec.configure do |config|
               resource_type: { type: :string, enum: %w[transaction] },
               active: { type: :boolean },
               effective_date: { type: :string, format: :date, nullable: true },
+              priority: { type: :integer, description: 'Position in the order rules run in (lowest first)' },
               conditions: {
                 type: :array,
                 items: { '$ref' => '#/components/schemas/RuleCondition' }

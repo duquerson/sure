@@ -753,6 +753,7 @@ class Family::DataExporter
         resource_type: rule.resource_type,
         active: rule.active,
         effective_date: rule.effective_date&.iso8601,
+        priority: rule.priority,
         conditions: rule.conditions.where(parent_id: nil).map { |condition| serialize_condition(condition) },
         actions: rule.actions.map { |action| serialize_action(action) }
       }
