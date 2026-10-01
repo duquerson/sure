@@ -60,12 +60,59 @@ class Loan::CollateralAccountTest < ActiveSupport::TestCase
 
   test "a loan can be created already secured by an asset of its own family" do
     family = @loan.account.family
+    @property.auto_share_with_family!
 
     assert_difference -> { family.accounts.count }, 1 do
       created = create_loan_on(family, collateral: @property)
 
       assert_equal @property.id, created.loan.collateral_account_id
     end
+  end
+
+  # A new account in a family that shares by default is visible to everyone in it
+  # the moment it exists, but its shares are written after validation. Judged
+  # against its owner alone, a private property would pass and then be linked from
+  # a loan the whole family can see.
+  test "a new loan the family will share cannot be secured by a private asset" do
+    family = @loan.account.family
+    assert family.share_all_by_default?, "precondition"
+    assert_not_equal [], family.users.where.not(id: @property.owner_id).to_a, "precondition"
+    @property.account_shares.destroy_all
+
+    error = assert_raises(ActiveRecord::RecordInvalid) { create_loan_on(family, collateral: @property) }
+
+    assert_match "must be visible to every loan viewer", error.message
+  end
+
+  test "a new loan in a family that does not share by default only needs its owner to see the asset" do
+    family = @loan.account.family
+    family.update!(default_account_sharing: "private")
+    @property.account_shares.destroy_all
+
+    assert_nothing_raised { create_loan_on(family, collateral: @property) }
+  end
+
+  test "an id that is not an account is a validation error, not a foreign key exception" do
+    @loan.collateral_account_id = SecureRandom.uuid
+
+    assert_not @loan.valid?
+    assert_equal [ "does not exist" ], @loan.errors[:collateral_account]
+    assert_no_changes -> { @loan.reload.collateral_account_id } do
+      assert_not @loan.update(collateral_account_id: SecureRandom.uuid)
+    end
+  end
+
+  test "an unknown id on a loan being created is refused too" do
+    family = @loan.account.family
+
+    error = assert_raises(ActiveRecord::RecordInvalid) do
+      family.accounts.create_and_sync(
+        { name: "New loan", balance: 1_000, currency: "USD", owner: users(:family_admin),
+          accountable_type: "Loan", accountable_attributes: { collateral_account_id: SecureRandom.uuid } }
+      )
+    end
+
+    assert_match "does not exist", error.message
   end
 
   test "rejects any other kind of account" do

@@ -249,6 +249,18 @@ class LoansControllerTest < ActionDispatch::IntegrationTest
     assert_equal property.id, @account.loan.reload.collateral_account_id
   end
 
+  test "an unknown collateral id is refused, not a server error, and the link is kept" do
+    property = accounts(:property)
+    @account.loan.update!(collateral_account: property)
+
+    patch loan_path(@account), params: {
+      account: { accountable_attributes: { id: @account.accountable_id, collateral_account_id: SecureRandom.uuid } }
+    }
+
+    assert_response :unprocessable_entity
+    assert_equal property.id, @account.loan.reload.collateral_account_id
+  end
+
   test "a blank collateral clears the link" do
     @account.loan.update!(collateral_account: accounts(:property))
 
@@ -259,7 +271,11 @@ class LoansControllerTest < ActionDispatch::IntegrationTest
     assert_nil @account.loan.reload.collateral_account_id
   end
 
+  # Each refusal is checked against an EXISTING link: with none to begin with, a
+  # rejected update that quietly cleared the link would look the same.
   test "refuses an account from another family and leaves the link as it was" do
+    kept = accounts(:property)
+    @account.loan.update!(collateral_account: kept)
     foreign = families(:empty).accounts.create!(name: "Not ours", currency: "USD", balance: 1, accountable: Property.new)
 
     patch loan_path(@account), params: {
@@ -267,16 +283,19 @@ class LoansControllerTest < ActionDispatch::IntegrationTest
     }
 
     assert_response :unprocessable_entity
-    assert_nil @account.loan.reload.collateral_account_id
+    assert_equal kept.id, @account.loan.reload.collateral_account_id
   end
 
-  test "refuses a kind of account that cannot secure a loan" do
+  test "refuses a kind of account that cannot secure a loan and leaves the link as it was" do
+    kept = accounts(:vehicle)
+    @account.loan.update!(collateral_account: kept)
+
     patch loan_path(@account), params: {
       account: { accountable_attributes: { id: @account.accountable_id, collateral_account_id: accounts(:depository).id } }
     }
 
     assert_response :unprocessable_entity
-    assert_nil @account.loan.reload.collateral_account_id
+    assert_equal kept.id, @account.loan.reload.collateral_account_id
   end
 
   test "a failed create re-renders the form with the collateral choices" do
@@ -291,11 +310,35 @@ class LoansControllerTest < ActionDispatch::IntegrationTest
     }
 
     assert_response :unprocessable_entity
-    assert_select "select[name='account[accountable_attributes][collateral_account_id]']"
+    assert_select "select[name='account[accountable_attributes][collateral_account_id]']" do
+      assert_select "option[value='#{accounts(:property).id}']", text: accounts(:property).name
+      assert_select "option[value='#{accounts(:vehicle).id}']", text: accounts(:vehicle).name
+      assert_select "option[value='#{foreign.id}']", count: 0
+    end
+  end
+
+  # The currency is on the same form, so the first render cannot filter by it; once
+  # a submission has named one, the re-rendered picker can.
+  test "a failed create offers only assets in the currency it was submitted with" do
+    euro = @account.family.accounts.create!(name: "Flat in Lisbon", currency: "EUR", balance: 1, owner: @user, accountable: Property.new)
+    foreign = families(:empty).accounts.create!(name: "Not ours", currency: "USD", balance: 1, accountable: Property.new)
+
+    post loans_path, params: {
+      account: {
+        name: "Secured loan", balance: 50_000, currency: "USD", accountable_type: "Loan",
+        accountable_attributes: { subtype: "mortgage", interest_rate: 5, term_months: 60, rate_type: "fixed",
+                                  initial_balance: 50_000, collateral_account_id: foreign.id }
+      }
+    }
+
+    assert_response :unprocessable_entity
+    assert_select "option[value='#{accounts(:property).id}']"
+    assert_select "option[value='#{euro.id}']", count: 0
   end
 
   test "creates a loan secured by a vehicle" do
     vehicle = accounts(:vehicle)
+    vehicle.auto_share_with_family!
 
     post loans_path, params: {
       account: {
@@ -378,6 +421,16 @@ class LoansControllerTest < ActionDispatch::IntegrationTest
       assert_select "h4", text: "Equity"
       assert_select "p", text: "$50,000.00"
     end
+  end
+
+  test "a switched-off loan shows no collateral section, not the asset's full value as equity" do
+    @account.loan.update!(collateral_account: accounts(:property))
+    @account.update_columns(status: "disabled")
+
+    get account_path(@account)
+
+    assert_response :success
+    assert_select "[data-collateral-position]", count: 0
   end
 
   test "a loan with no collateral shows no collateral section" do

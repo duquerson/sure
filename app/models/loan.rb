@@ -138,6 +138,17 @@ class Loan < ApplicationRecord
     amortization_schedule.monthly_payment
   end
 
+  # What is wrong with the link as it stands: an id that names no account is
+  # refused here, as the foreign key would otherwise raise it as a server error,
+  # and a blank id is simply no link. Used by the validation and, for a loan being
+  # created, by Account.
+  def collateral_problems(loan_account: self.account)
+    return [] if collateral_account_id.blank?
+    return [ "does not exist" ] if collateral_account.nil?
+
+    collateral_ineligibilities_for(collateral_account, loan_account: loan_account)
+  end
+
   # Why `account` cannot secure this loan; empty when it can. The one definition
   # shared by the validation and by the form's candidate list, so the list never
   # offers an account the save would refuse.
@@ -172,13 +183,15 @@ class Loan < ApplicationRecord
   # The accounts a viewer may pick as this loan's collateral: assets of the right
   # type in the loan's family that they can see and that the save would accept.
   # `family` stands in for the loan account's when the loan has none yet.
-  def self.collateral_candidates_for(loan, viewer:, family: nil)
+  # `currency` narrows the list when the loan has no account to read one from.
+  def self.collateral_candidates_for(loan, viewer:, family: nil, currency: nil)
     family ||= loan.account&.family
     return Account.none unless family && viewer
 
-    Account.accessible_by(viewer).visible
+    scope = Account.accessible_by(viewer).visible
       .where(family_id: family.id, accountable_type: COLLATERAL_ACCOUNTABLE_TYPES)
-      .order(:name)
+    scope = scope.where(currency: currency) if currency.present? && loan.account.nil?
+    scope.order(:name)
       .select { |candidate| loan.collateral_ineligibilities_for(candidate).empty? }
   end
 
@@ -824,14 +837,19 @@ class Loan < ApplicationRecord
     # reason rather than the database raising at the user. Runs as a validation
     # so `save` actually returns false -- see the registration note above.
     def collateral_account_is_eligible
-      collateral_ineligibilities_for(collateral_account).each { |problem| errors.add(:collateral_account, problem) }
+      collateral_problems.each { |problem| errors.add(:collateral_account, problem) }
     end
 
     # Everyone who can see the loan's account. Mirrors LoanOffsetAccount's rule
     # (`account_is_visible_to_every_loan_viewer`): a link the loan's viewers could
     # not follow would show them a figure from an account they cannot see.
     def collateral_viewers(loan_account)
-      loan_account.family.users.select { |user| loan_account.shared_with?(user) }
+      users = loan_account.family.users
+      # A new account in a family that shares by default is visible to everyone in
+      # it the moment it exists, but its shares are written after validation.
+      return users.to_a if loan_account.new_record? && loan_account.family.share_all_by_default?
+
+      users.select { |user| loan_account.shared_with?(user) }
     end
 
     def validate_offset_accounts

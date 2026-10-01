@@ -38,7 +38,9 @@ class LoansController < ApplicationController
     # quietly drop it.
     def set_collateral_candidates
       loan = @account&.accountable || Loan.new
-      candidates = Loan.collateral_candidates_for(loan, viewer: Current.user, family: Current.family)
+      candidates = Loan.collateral_candidates_for(
+        loan, viewer: Current.user, family: Current.family, currency: params.dig(:account, :currency).presence
+      )
       current = loan.collateral_account
       if current && candidates.none? { |candidate| candidate.id == current.id } &&
           Account.accessible_by(Current.user).exists?(id: current.id)

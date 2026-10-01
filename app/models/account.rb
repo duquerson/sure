@@ -743,9 +743,9 @@ class Account < ApplicationRecord
   private
 
     def new_loan_collateral_is_eligible
-      return unless family && accountable.collateral_account_id.present?
+      return unless family
 
-      accountable.collateral_ineligibilities_for(accountable.collateral_account, loan_account: self).each do |problem|
+      accountable.collateral_problems(loan_account: self).each do |problem|
         errors.add(:base, "Collateral account #{problem}")
       end
     end

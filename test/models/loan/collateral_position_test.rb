@@ -82,6 +82,33 @@ class Loan::CollateralPositionTest < ActiveSupport::TestCase
     assert_nil position.equity
   end
 
+  # A switched-off loan is not counted as debt, so its own page would otherwise
+  # show the asset's full value as equity, against nothing.
+  test "a loan that is switched off shows no position of its own" do
+    @loan_account.update_columns(status: "disabled")
+
+    assert_nil Loan::CollateralPosition.for_loan(@loan_account.loan, viewer: @admin)
+    assert_nil Loan::CollateralPosition.for_collateral(@property, viewer: @admin)
+  end
+
+  test "an asset with no valuation yet has no position" do
+    @property.update_columns(balance: nil)
+
+    assert_nil Loan::CollateralPosition.for_collateral(@property, viewer: @admin)
+    assert_nil Loan::CollateralPosition.for_loan(@loan_account.loan, viewer: @admin)
+  end
+
+  test "equity is withheld while a linked loan has no balance" do
+    second = secure_another_loan(balance: 100_000)
+    second.update_columns(balance: nil)
+
+    position = Loan::CollateralPosition.for_collateral(@property, viewer: @admin)
+
+    assert_not position.complete?
+    assert_nil position.equity
+    assert_equal Money.new(550_000, "USD"), position.value
+  end
+
   test "nothing to show for an asset that secures no loan, or a loan with no asset" do
     assert_nil Loan::CollateralPosition.for_collateral(accounts(:vehicle), viewer: @admin)
 

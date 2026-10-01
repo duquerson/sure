@@ -20,7 +20,7 @@ en:
       offset_accounts_hint: Only accounts visible to everyone who can access this loan can be linked.
       collateral_account: Secured by
       collateral_account_none: Not secured against an asset
-      collateral_account_hint: Link a property or vehicle in the same currency to see your equity on both accounts. Only assets visible to everyone who can access this loan can be linked.
+      collateral_account_hint: Link a property or vehicle in the same currency. Equity appears on both accounts only when you can see every loan secured on the asset and their currencies match. Only assets visible to everyone who can access this loan can be linked.
       start_date: Origination date
       start_date_hint: When the loan was drawn down. Leave blank to use the account's opening date.
       rate_changes: Rate changes

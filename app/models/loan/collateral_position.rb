@@ -14,19 +14,23 @@ class Loan::CollateralPosition
   attr_reader :collateral, :viewer
 
   class << self
-    # The position of an asset, or nil when no loan is secured on it.
+    # The position of an asset, or nil when no loan is secured on it or the asset
+    # has no value yet.
     def for_collateral(account, viewer:)
+      return nil unless account.balance
+
       position = new(collateral: account, viewer: viewer)
       position.loan_accounts.any? ? position : nil
     end
 
-    # The position of a loan's asset, or nil when it has none or the viewer
-    # cannot see it.
+    # The position of a loan's asset, or nil when it has none, the viewer cannot
+    # see it, or no loan in use is secured on it (this loan may be switched off:
+    # it is not debt, so its own page would show the whole value as equity).
     def for_loan(loan, viewer:)
       collateral = loan.collateral_account
       return nil unless collateral && viewer && Account.accessible_by(viewer).exists?(id: collateral.id)
 
-      new(collateral: collateral, viewer: viewer)
+      for_collateral(collateral, viewer: viewer)
     end
   end
 
@@ -49,7 +53,7 @@ class Loan::CollateralPosition
     return @complete if defined?(@complete)
 
     @complete = loan_accounts.size == counted_loan_accounts.count &&
-      loan_accounts.all? { |account| account.currency == collateral.currency }
+      loan_accounts.all? { |account| account.balance && account.currency == collateral.currency }
   end
 
   def debt

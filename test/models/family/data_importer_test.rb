@@ -42,6 +42,31 @@ class Family::DataImporterTest < ActiveSupport::TestCase
     assert_not_equal "old-property", loan.collateral_account_id
   end
 
+  # Session imports arrive in chunks, and every other reference in them must
+  # already resolve (a missing one raises). A collateral id that does not would
+  # otherwise be dropped without a trace, so a loan in one chunk naming an asset
+  # in a later one would lose its link silently.
+  test "a session import raises when a loan's collateral has not been imported yet" do
+    session = @family.import_sessions.create!(expected_chunks: 2)
+    ndjson = build_ndjson(collateral_records(collateral_ref: "asset-in-a-later-chunk"))
+
+    assert_raises(Family::DataImporter::MissingReferenceError) do
+      Family::DataImporter.new(@family, ndjson, import_session: session).import!
+    end
+  end
+
+  test "a session import links a loan to an asset imported by an earlier chunk" do
+    session = @family.import_sessions.create!(expected_chunks: 2)
+    records = collateral_records(collateral_ref: "old-property")
+    Family::DataImporter.new(@family, build_ndjson([ records.last ]), import_session: session).import!
+
+    result = Family::DataImporter.new(@family, build_ndjson([ records.first ]), import_session: session).import!
+
+    loan = result[:accounts].find { |account| account.accountable_type == "Loan" }.loan
+    assert_not_nil loan.reload.collateral_account_id
+    assert_equal "House", loan.collateral_account.name
+  end
+
   test "leaves a loan unlinked when its collateral is not in the import" do
     ndjson = build_ndjson(collateral_records(collateral_ref: "some-account-we-never-exported"))
 
