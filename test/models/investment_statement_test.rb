@@ -1905,29 +1905,78 @@ class InvestmentStatementTest < ActiveSupport::TestCase
     assert_equal 1000, etf.first.amount.amount.to_i
   end
 
-  # A provider's list rarely sums to exactly 100 (a "top holdings" feed can stop
-  # at 80). The weights are normalised against their actual sum -- see
-  # `Security::Constituent` -- so the listed constituents carry the whole fund
-  # between them and nothing is left over. Pinned at the bottom level because
-  # that is where the scaled values are now printed by name; presenting the
-  # unlisted remainder differently is an open product question, and this test
-  # is what would change with it.
-  test "an incomplete constituent list is scaled to the whole fund at the bottom level" do
+  # A "top holdings" feed can stop at 80. The unlisted 20 is not the listed
+  # names' to carry: spreading it pro rata showed each of them at 1.25 times its
+  # real share (#269). It is the fund's unlisted remainder, so it is filed as
+  # unclassified at every level, and each level still adds up to the fund.
+  test "a fund listing 80% of its holdings shows the other 20% as unclassified at every level" do
     account = create_investment_account(balance: 1000, cash_balance: 0)
     first = create_classified_security(ticker: "PSH1", asset_class: "equity", asset_sub_class: "stock")
     second = create_classified_security(ticker: "PSH2", asset_class: "equity", asset_sub_class: "stock")
-    fund = create_classified_security(ticker: "PFND1", asset_class: "equity", asset_sub_class: "etf")
+    fund = create_classified_security(ticker: "PFND1", name: "Partial Fund", asset_class: "equity", asset_sub_class: "etf")
     fund.constituents.create!(ticker: "PSH1", name: "First share", weight: 50)
     fund.constituents.create!(ticker: "PSH2", name: "Second share", weight: 30)
     Holding.create!(account: account, security: fund, date: Date.current, qty: 1, price: 1000, amount: 1000, currency: "USD")
 
-    rows = @statement.allocation_children("asset_sub_class", "stock", look_through: true, parent: "equity")
-      .index_by(&:id)
+    classes = @statement.allocation_by("asset_class", look_through: true).index_by(&:id)
+    assert_equal 800, classes["equity"].amount.amount.to_i, "the listed 80% is 800 of the fund, not all of it"
+    assert_equal 200, classes[InvestmentStatement::UNCLASSIFIED].amount.amount.to_i,
+                 "the unlisted 20% was spread over the listed names instead of shown"
 
-    assert_equal 625, rows[first.id].amount.amount.to_i, "50 of a listed 80 is 62.5% of the fund"
-    assert_equal 375, rows[second.id].amount.amount.to_i, "30 of a listed 80 is 37.5% of the fund"
-    assert_equal 1000, rows.values.sum { |r| r.amount.amount }.to_i,
-                 "the listed constituents did not account for the whole fund"
+    equity_subs = @statement.allocation_children("asset_class", "equity", look_through: true).index_by(&:id)
+    unclassified_subs = @statement.allocation_children("asset_class", InvestmentStatement::UNCLASSIFIED, look_through: true).index_by(&:id)
+    assert_equal 800, equity_subs["stock"].amount.amount.to_i
+    assert_equal 200, unclassified_subs[InvestmentStatement::UNCLASSIFIED].amount.amount.to_i
+
+    stock = @statement.allocation_children("asset_sub_class", "stock", look_through: true, parent: "equity").index_by(&:id)
+    assert_equal 500, stock[first.id].amount.amount.to_i, "50 of the fund is 500, not 50/80 of it"
+    assert_equal 300, stock[second.id].amount.amount.to_i, "30 of the fund is 300, not 30/80 of it"
+
+    remainder = @statement.allocation_children(
+      "asset_sub_class", InvestmentStatement::UNCLASSIFIED, look_through: true, parent: InvestmentStatement::UNCLASSIFIED
+    )
+    assert_equal 1, remainder.size, "the remainder is one row for the fund"
+    assert_equal 200, remainder.first.amount.amount.to_i
+    assert_equal I18n.t("models.investment_statement.unlisted_constituents", fund: "Partial Fund"), remainder.first.name
+
+    assert_equal 1000, classes.values.sum { |s| s.amount.amount }.to_i, "the levels no longer add up to the fund"
+  end
+
+  # Where "short of 100" starts. Rounding drift is not a remainder: a list at
+  # 99.00 or above is the whole fund and is normalised against its own sum, as
+  # before. Below it, the shortfall is shown.
+  test "a list summing to 99.00 is the whole fund, with no remainder" do
+    classes = asset_classes_for_listed_weights(60, BigDecimal("39.00"))
+
+    assert_nil classes[InvestmentStatement::UNCLASSIFIED], "rounding drift at 99.00 was shown as a remainder"
+    assert_equal 1000, classes["equity"].amount.amount.to_i
+  end
+
+  test "a list summing to 98.99 leaves 1.01% of the fund unlisted" do
+    classes = asset_classes_for_listed_weights(60, BigDecimal("38.99"))
+
+    assert_equal BigDecimal("10.10"), classes[InvestmentStatement::UNCLASSIFIED].amount.amount
+    assert_equal BigDecimal("989.90"), classes["equity"].amount.amount
+  end
+
+  # Out of scope for #269, and pinned so it stays that way: a list over 100
+  # (overlapping share classes, leverage) is still divided by its own sum, so
+  # the listed names are scaled down and nothing is left over.
+  test "a list over 100 is still divided by its own sum" do
+    account = create_investment_account(balance: 1000, cash_balance: 0)
+    first = create_classified_security(ticker: "OVR1", asset_class: "equity", asset_sub_class: "stock")
+    second = create_classified_security(ticker: "OVR2", asset_class: "equity", asset_sub_class: "stock")
+    fund = create_classified_security(ticker: "OVRF", asset_class: "equity", asset_sub_class: "etf")
+    fund.constituents.create!(ticker: "OVR1", name: "First", weight: 60)
+    fund.constituents.create!(ticker: "OVR2", name: "Second", weight: 60)
+    Holding.create!(account: account, security: fund, date: Date.current, qty: 1, price: 1000, amount: 1000, currency: "USD")
+
+    stock = @statement.allocation_children("asset_sub_class", "stock", look_through: true, parent: "equity").index_by(&:id)
+    classes = @statement.allocation_by("asset_class", look_through: true).index_by(&:id)
+
+    assert_equal 500, stock[first.id].amount.amount.to_i
+    assert_equal 500, stock[second.id].amount.amount.to_i
+    assert_nil classes[InvestmentStatement::UNCLASSIFIED], "an over-100 list left a remainder"
   end
 
   # A sub-class NAME is not unique across asset classes -- `unclassified` is
@@ -2260,6 +2309,20 @@ class InvestmentStatementTest < ActiveSupport::TestCase
         children = statement.allocation_children("asset_class", segment.id, look_through: true)
         children.each { |child| statement.allocation_children("asset_sub_class", child.id, look_through: true) }
       end
+    end
+
+    # A 1,000 holding in one fund whose two listed constituents are both
+    # classified equity, so anything outside `equity` is the unlisted remainder.
+    def asset_classes_for_listed_weights(first_weight, second_weight)
+      account = create_investment_account(balance: 1000, cash_balance: 0)
+      first = create_classified_security(asset_class: "equity", asset_sub_class: "stock")
+      second = create_classified_security(asset_class: "equity", asset_sub_class: "stock")
+      fund = create_classified_security(asset_class: "equity", asset_sub_class: "etf")
+      fund.constituents.create!(ticker: first.ticker, name: "First", weight: first_weight)
+      fund.constituents.create!(ticker: second.ticker, name: "Second", weight: second_weight)
+      Holding.create!(account: account, security: fund, date: Date.current, qty: 1, price: 1000, amount: 1000, currency: "USD")
+
+      @statement.allocation_by("asset_class", look_through: true).index_by(&:id)
     end
 
     def create_classified_security(**attrs)

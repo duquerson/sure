@@ -3,3 +3,4 @@ en:
   models:
     investment_statement:
       cash: Cash
+      unlisted_constituents: "%{fund}: holdings not listed"
