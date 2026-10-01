@@ -132,12 +132,12 @@ from this fork.
 
 Follow this sequence for any issue-driven change. Do not skip or reorder steps.
 
-1. **Raise the issue and wait for its Gatekeeper review.** Do not edit the issue
-   or start a PR until the review has landed and been validated.
-2. **Re-read the issue.** Fetch it fresh, including every comment. Requirements
-   and decisions are frequently added in comments after the body was written.
-3. **Post a detailed triage plan as a comment under that issue** before any PR
-   work. Every issue gets its own plan. It must state:
+1. **Raise the issue with its triage plan in the body**, and wait for its
+   Gatekeeper review. The Gatekeeper reviews the issue and its plan as one.
+   Do not edit the issue or start a PR until the review has landed and been
+   validated. Every issue gets its own plan, and the body carries, in order:
+   the problem, as observed behaviour; the proof/evidence; the blast radius;
+   and the triage plan, which must state:
    - **What the issue actually is** -- the defect or requirement in terms of
      observed behaviour, not a restatement of the title.
    - **What the PR will touch** -- files, classes and methods, and the blast
@@ -150,6 +150,13 @@ Follow this sequence for any issue-driven change. Do not skip or reorder steps.
    - **The evidence required** -- what will demonstrate that it fixes the issue,
      and that it will not introduce future defects: neighbouring callers,
      regression coverage and a full-suite run.
+2. **Re-read the issue.** Fetch it fresh, including every comment. Requirements
+   and decisions are frequently added in comments after the body was written.
+3. **Validate the review and settle the plan before any PR work.** Check each
+   finding against the current code, then fix or decline it with evidence, as
+   rule 7 already requires. Where a finding changes the plan, record the
+   revision in the issue body in place -- the revision goes into the plan
+   itself, not a separate revised-plan comment.
 4. **Open the change as a DRAFT pull request** following that plan. Wait for the
    light-touch Gatekeeper review. Do not work on fixes until it has landed and its
    feedback has been validated.
