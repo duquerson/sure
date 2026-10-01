@@ -97,6 +97,41 @@ class BalanceSheet::NetWorthVelocityTest < ActiveSupport::TestCase
     assert_nil velocity.momentum
   end
 
+  # One account with a long history must not vouch for another that opens inside
+  # the window: its balance arrives from nothing, and the series counts that as
+  # growth.
+  test "velocity is withheld when any account's history starts inside the period" do
+    track(history_from: @prior.start_date) { |date| level(date, prior_gain: 1_000, current_gain: 3_000) }
+    newcomer = @family.accounts.create!(name: "New", currency: "USD", balance: 0, accountable: Depository.new)
+    newcomer.entries.create!(
+      name: "Opening", date: @period.start_date + 3, amount: 5_000, currency: "USD",
+      entryable: Valuation.new(kind: "opening_anchor")
+    )
+
+    assert_nil velocity.velocity
+    assert_nil velocity.momentum
+  end
+
+  test "an account with no entries does not hold the figures back" do
+    track(history_from: @prior.start_date) { |date| level(date, prior_gain: 1_000, current_gain: 3_000) }
+    @family.accounts.create!(name: "Empty", currency: "USD", balance: 0, accountable: Depository.new)
+
+    assert_not_nil velocity.velocity
+    assert_not_nil velocity.momentum
+  end
+
+  # The series is not drawn from a pending transaction, so one dated before the
+  # real history must not stand in for it.
+  test "a pending transaction dated before the history does not count as history" do
+    track(history_from: @period.start_date + 3) { |date| level(date, prior_gain: 0, current_gain: 3_000) }
+    @account.entries.create!(
+      name: "Pending", date: @prior.start_date - 5, amount: 10, currency: "USD",
+      entryable: Transaction.new(extra: { "simplefin" => { "pending" => true } })
+    )
+
+    assert_nil velocity.velocity
+  end
+
   test "a single-day period has no velocity" do
     track(history_from: @prior.start_date) { 10_000 }
     one_day = Period.custom(start_date: @today, end_date: @today)

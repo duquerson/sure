@@ -64,17 +64,25 @@ class BalanceSheet::NetWorthVelocity
     end
 
     def history_covers?(window)
-      first_entry_on = first_entry_on_date
-      first_entry_on.present? && first_entry_on <= window.start_date
+      history_began_on = latest_account_start_date
+      history_began_on.present? && history_began_on <= window.start_date
     end
 
-    # The earliest entry among the accounts the series is built from, which is
-    # not the same as the family's earliest entry for a viewer who can see only
-    # some of its accounts.
-    def first_entry_on_date
-      return @first_entry_on_date if defined?(@first_entry_on_date)
+    # The date from which EVERY account the series is built from has history: the
+    # latest of their first entries. One account with a long history must not
+    # vouch for another that opens inside the window, whose balance arrives from
+    # nothing and would read as growth. Accounts with no entries add nothing to
+    # the series, so they do not hold it back.
+    #
+    # Pending transactions are left out: the series is not drawn from them, so one
+    # dated before the real history must not stand in for it. Taken over the
+    # accounts the series is built from, not the family's, for a viewer who can
+    # see only some of them.
+    def latest_account_start_date
+      return @latest_account_start_date if defined?(@latest_account_start_date)
 
       account_ids = BalanceSheet::HistoricalAccountScope.new(balance_sheet.family, user: balance_sheet.user).account_ids
-      @first_entry_on_date = Entry.where(account_id: account_ids).minimum(:date)
+      @latest_account_start_date = Entry.where(account_id: account_ids).excluding_pending
+        .group(:account_id).minimum(:date).values.max
     end
 end
