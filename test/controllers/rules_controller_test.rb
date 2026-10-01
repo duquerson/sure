@@ -8,15 +8,21 @@ class RulesControllerTest < ActionDispatch::IntegrationTest
   test "index lists rules in priority order by default" do
     family = @user.family
     family.rules.destroy_all
-    later = family.rules.create!(resource_type: "transaction", name: "Zebra", actions: [ Rule::Action.new(action_type: "exclude_transaction") ])
-    earlier = family.rules.create!(resource_type: "transaction", name: "Apple", actions: [ Rule::Action.new(action_type: "exclude_transaction") ])
-    later.update_columns(priority: 1)
-    earlier.update_columns(priority: 2)
+    # Created Bravo, Charlie, Alpha; by name they would read Alpha, Bravo, Charlie. Only
+    # priority produces Charlie, Alpha, Bravo.
+    bravo, charlie, alpha = %w[Bravo Charlie Alpha].map do |name|
+      family.rules.create!(resource_type: "transaction", name: name, actions: [ Rule::Action.new(action_type: "exclude_transaction") ])
+    end
+    charlie.update_columns(priority: 1)
+    alpha.update_columns(priority: 2)
+    bravo.update_columns(priority: 3)
 
     get rules_url
 
     assert_response :success
-    assert_operator response.body.index("Zebra"), :<, response.body.index("Apple")
+    positions = %w[Charlie Alpha Bravo].map { |name| response.body.index(">#{name}<") }
+    assert_equal positions.sort, positions
+    assert positions.all?
   end
 
   test "index still sorts by name on request and then offers no reordering" do

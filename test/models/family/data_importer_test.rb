@@ -1909,11 +1909,12 @@ class Family::DataImporterTest < ActiveSupport::TestCase
       } }
     }
 
+    existing = @family.rules.create!(resource_type: "transaction", name: "Existing", actions: [ Rule::Action.new(action_type: "exclude_transaction") ])
+    existing.update_columns(priority: 50)
+
     Family::DataImporter.new(@family, build_ndjson([ rule_data.call("One"), rule_data.call("Two") ])).import!
 
-    imported = @family.rules.prioritised.where(name: [ "One", "Two" ]).pluck(:name)
-    assert_equal [ "One", "Two" ], imported
-    assert_equal imported.size, @family.rules.where(name: [ "One", "Two" ]).pluck(:priority).uniq.size
+    assert_equal [ "Existing", "One", "Two" ], @family.rules.prioritised.where(name: [ "Existing", "One", "Two" ]).pluck(:name)
   end
 
   test "imports transaction_tag rule condition by remapping the tag name to an id" do
