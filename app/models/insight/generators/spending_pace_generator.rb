@@ -38,7 +38,7 @@ class Insight::Generators::SpendingPaceGenerator < Insight::Generator
 
     def pace_insight(budget, pace)
       status = pace.status.to_s
-      spent_pct = (pace.spent_fraction * 100).to_i
+      spent_pct = pace.spent_percent
 
       build_insight(
         insight_type: "spending_pace",
@@ -49,7 +49,7 @@ class Insight::Generators::SpendingPaceGenerator < Insight::Generator
           spent: format_money(pace.spent),
           budgeted: format_money(pace.budgeted),
           spent_pct: spent_pct,
-          elapsed_pct: (pace.elapsed_fraction * 100).to_i,
+          elapsed_pct: pace.elapsed_percent,
           projected_spend: format_money(pace.projected_spend),
           over_by: format_money([ pace.spent - pace.budgeted, 0 ].max)
         },

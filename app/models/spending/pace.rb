@@ -69,6 +69,16 @@ class Spending::Pace
     spent.to_r / budgeted.to_r
   end
 
+  # Whole percentages (rounded down) for display, so every surface that quotes
+  # them -- the page and the insight facts -- quotes the same figure.
+  def elapsed_percent
+    (elapsed_fraction * 100).floor
+  end
+
+  def spent_percent
+    (spent_fraction * 100).floor
+  end
+
   # What the period ends at if the rest of it is spent at the rate so far.
   def projected_spend
     spent * total_days / elapsed_days

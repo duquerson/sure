@@ -65,6 +65,8 @@ class Spending::PaceTest < ActiveSupport::TestCase
     assert_equal 30, result.total_days
     assert_equal Rational(1, 3), result.elapsed_fraction
     assert_equal Rational(2, 5), result.spent_fraction
+    assert_equal 33, result.elapsed_percent
+    assert_equal 40, result.spent_percent
     assert_equal 1200.to_d, result.projected_spend
     assert_equal 1000.to_d, result.budgeted
     assert_equal 400.to_d, result.spent
