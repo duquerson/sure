@@ -127,10 +127,21 @@ from this fork.
    deciding whether the two PRs are the same change: where they share a branch,
    "same branch, same commit"; where the fork pre-flight is a cherry-pick onto
    the mirror, say that instead.
+9. **A feedback check includes every poster** *(both repos)*. When asked to
+   check for feedback since a given time, include every issue comment, review
+   and inline thread posted in that window, whatever account posted it. The
+   Gatekeeper review, the nightly `## PR DAILY SWEEP` and the production-readiness
+   reviews all post as `jaysbeekay`, the same login the owner's replies use, so
+   "the last comment is ours" proves nothing. Classify each item by its content,
+   and count a review as answered only when a later comment replies to it,
+   citing its id. Filtering by author hid the unanswered sweeps on #211 and
+   #248 on 2026-10-01.
 
 ### Issue and pull request sequence (this fork)
 
 Follow this sequence for any issue-driven change. Do not skip or reorder steps.
+It governs project code only. A change to these working rules in `CLAUDE.md`
+goes straight to `main`, without an issue or a draft PR.
 
 1. **Raise the issue with its triage plan in the body**, and wait for its
    Gatekeeper review. The Gatekeeper reviews the issue and its plan as one.
