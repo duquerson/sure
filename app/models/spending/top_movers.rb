@@ -34,6 +34,20 @@ class Spending::TopMovers
     def direction
       delta.positive? ? :up : :down
     end
+
+    # A stable identity for the category, including the synthetic buckets
+    # (Uncategorized, Other investments), which have no id. Always a String, so
+    # a list of keys sorts and serialises whatever mix it holds.
+    def key
+      Spending::TopMovers.key_for(category)
+    end
+  end
+
+  def self.key_for(category)
+    if category.uncategorized? then "uncategorized"
+    elsif category.other_investments? then "other_investments"
+    else category.id
+    end
   end
 
   # The window of equal length ending the day before `period` starts -- the
@@ -70,19 +84,11 @@ class Spending::TopMovers
   private
     attr_reader :income_statement, :period, :previous_period
 
-    # { key => { category:, total: } }, keyed the way net_category_totals keys
-    # its own rows so the synthetic categories (which have no id) line up
-    # across the two periods.
+    # { key => { category:, total: } }, keyed by Mover#key so the synthetic
+    # categories (which have no id) line up across the two periods.
     def spend_by_category(for_period)
       income_statement.net_category_totals(period: for_period).net_expense_categories.each_with_object({}) do |ct, by_key|
-        by_key[category_key(ct.category)] = { category: ct.category, total: ct.total.to_d }
-      end
-    end
-
-    def category_key(category)
-      if category.uncategorized? then :uncategorized
-      elsif category.other_investments? then :other_investments
-      else category.id
+        by_key[self.class.key_for(ct.category)] = { category: ct.category, total: ct.total.to_d }
       end
     end
 end

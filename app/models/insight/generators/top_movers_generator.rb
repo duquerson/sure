@@ -39,7 +39,7 @@ class Insight::Generators::TopMoversGenerator < Insight::Generator
     attr_reader :today
 
     def narrative
-      @narrative ||= Spending::Narrative.new(family: family, user: nil, on: today)
+      @narrative ||= Spending::Narrative.new(family: family, user: nil, on: today, household: true)
     end
 
     # Exact comparison, not the rounded display percentage: 24.9% must not pass
@@ -73,7 +73,7 @@ class Insight::Generators::TopMoversGenerator < Insight::Generator
         # lead's change. The exact amounts live in `facts` only.
         metadata: {
           direction: direction,
-          category_ids: listed.map { |mover| mover.category.id }.sort,
+          category_ids: listed.map(&:key).sort,
           change_bucket: change_bucket(lead)
         },
         period: narrative.period,

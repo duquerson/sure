@@ -81,6 +81,25 @@ class Insight::Generators::TopMoversGeneratorTest < ActiveSupport::TestCase
     assert_equal 3, insight.metadata[:category_ids].size
   end
 
+  # Uncategorised spend has no category id. Listed next to a real category it
+  # used to make the metadata sort raise, which the registry logs and skips: one
+  # synthetic bucket silently suppressed the whole insight.
+  test "an uncategorised bucket among the listed movers does not break the insight" do
+    seed_baseline
+    spend(@dining, 300, CURRENT_DAY)                                   # +300
+    create_transaction(amount: 200, date: CURRENT_DAY, name: "No category") # uncategorised +200
+
+    insights = nil
+    assert_nothing_raised { insights = generate }
+
+    insight = insights.first
+    assert_equal "Mover Dining and Uncategorized", insight.facts[:categories]
+    assert_equal 2, insight.metadata[:category_ids].size
+    assert_includes insight.metadata[:category_ids], @dining.id
+    assert_includes insight.metadata[:category_ids], "uncategorized"
+    assert insight.metadata[:category_ids].all? { |id| id.is_a?(String) }
+  end
+
   test "a mover that went the other way is not listed under the biggest mover's direction" do
     seed_baseline
     spend(@travel, 400, PREVIOUS_DAY)         # travel: 400 -> 0, a fall of 400
