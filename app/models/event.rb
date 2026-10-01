@@ -48,6 +48,33 @@ class Event < ApplicationRecord
       .where.not(id: event_transactions.excluded.select(:transaction_id))
   end
 
+  # Pull a transaction in by hand (it may be dated outside the range).
+  def include_transaction!(transaction)
+    set_override!(transaction, "included")
+  end
+
+  # Take a transaction out by hand (it may be dated inside the range).
+  def exclude_transaction!(transaction)
+    set_override!(transaction, "excluded")
+  end
+
+  # Drop any manual override, so the date range alone decides again.
+  def reset_transaction!(transaction)
+    event_transactions.where(transaction_id: transaction.id).destroy_all
+  end
+
+  # Candidates to pull in by hand: reportable transactions dated up to `within`
+  # days either side of the range, which the event does not already hold. A
+  # transaction that was removed by hand is not offered; it is listed as removed
+  # and restored from there.
+  def nearby_transactions(user: nil, within: 14)
+    overridden = event_transactions.select(:transaction_id)
+    base = reportable_transactions(user).where.not(id: overridden)
+
+    base.where(entries: { date: (start_date - within)..(start_date - 1) })
+      .or(base.where(entries: { date: (end_date + 1)..(end_date + within) }))
+  end
+
   # Expenses minus refunds over the event's transactions, in family currency.
   # Negative when refunds exceed spending.
   def true_cost(user: nil)
@@ -129,6 +156,11 @@ class Event < ApplicationRecord
       ids = included_account_ids(user)
       scope = scope.where(entries: { account_id: ids }) if ids
       scope
+    end
+
+    def set_override!(transaction, inclusion)
+      override = event_transactions.find_or_initialize_by(transaction_id: transaction.id)
+      override.update!(inclusion: inclusion)
     end
 
     def included_account_ids(user)

@@ -297,6 +297,95 @@ class EventTest < ActiveSupport::TestCase
     assert_nil event.cumulative_series
   end
 
+  # Setting overrides ----------------------------------------------------
+
+  test "including a transaction twice keeps one override" do
+    outside = Transaction.find(txn(6))
+
+    assert_difference "@event.event_transactions.count", 1 do
+      @event.include_transaction!(outside)
+      @event.include_transaction!(outside)
+    end
+    assert_includes @event.transactions.pluck(:id), outside.id
+  end
+
+  test "excluding a transaction that was included flips the override rather than adding one" do
+    outside = Transaction.find(txn(6))
+    @event.include_transaction!(outside)
+
+    assert_no_difference "@event.event_transactions.count" do
+      @event.exclude_transaction!(outside)
+    end
+    assert_equal "excluded", @event.event_transactions.find_by!(transaction_id: outside.id).inclusion
+    assert_not_includes @event.transactions.pluck(:id), outside.id
+  end
+
+  test "resetting a transaction removes its override and restores the date rule" do
+    inside = Transaction.find(txn(2))
+    @event.exclude_transaction!(inside)
+    before = @event.transactions.pluck(:id)
+
+    assert_difference "@event.event_transactions.count", -1 do
+      @event.reset_transaction!(inside)
+    end
+    assert_equal [ inside.id ], @event.transactions.pluck(:id) - before
+  end
+
+  test "resetting a transaction with no override does nothing" do
+    inside = Transaction.find(txn(2))
+
+    assert_no_difference "EventTransaction.count" do
+      @event.reset_transaction!(inside)
+    end
+  end
+
+  test "overrides are kept per event" do
+    other = @family.events.create! name: "Other", start_date: @day0, end_date: @day0 + 4
+    inside = Transaction.find(txn(2))
+
+    @event.exclude_transaction!(inside)
+    other.reset_transaction!(inside)
+
+    assert_equal 1, @event.event_transactions.count
+  end
+
+  # Candidates to add ----------------------------------------------------
+
+  test "nearby transactions are those just outside the range that the event does not hold" do
+    inside = txn(2)
+    just_before = txn(-1)
+    just_after = txn(5)
+    far_before = txn(-30)
+    far_after = txn(40)
+
+    ids = @event.nearby_transactions(within: 14).pluck(:id)
+
+    assert_equal [ just_before, just_after ].sort, ids.sort
+    assert_not_includes ids, inside
+    assert_not_includes ids, far_before
+    assert_not_includes ids, far_after
+  end
+
+  test "a transaction already pulled in is no longer a candidate" do
+    candidate = Transaction.find(txn(5))
+    before = @event.nearby_transactions(within: 14).pluck(:id)
+
+    @event.include_transaction!(candidate)
+
+    assert_equal [ candidate.id ], before - @event.nearby_transactions(within: 14).pluck(:id)
+  end
+
+  test "nearby transactions leave out transfers" do
+    savings = @family.accounts.create! name: "Savings", currency: "USD", balance: 0, accountable: Depository.new
+    create_transfer(from_account: @checking, to_account: savings, amount: 500, date: @day0 + 6)
+    before = @event.nearby_transactions(within: 14).count
+
+    txn(6)
+
+    assert_equal 1, @event.nearby_transactions(within: 14).count - before
+    assert_equal 0, before
+  end
+
   # Account access -------------------------------------------------------
 
   test "scoping to a user leaves out accounts that user cannot see" do
