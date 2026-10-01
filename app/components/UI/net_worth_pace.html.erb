@@ -1,0 +1,13 @@
+<dl class="flex flex-wrap justify-end gap-x-6 gap-y-2 text-right" data-net-worth-pace>
+  <div>
+    <dt class="text-xs text-secondary"><%= t("UI.net_worth_pace.velocity") %></dt>
+    <dd class="text-sm font-medium font-mono text-primary privacy-sensitive"><%= t("UI.net_worth_pace.per_month", amount: velocity_label) %></dd>
+  </div>
+
+  <% if momentum? %>
+    <div>
+      <dt class="text-xs text-secondary"><%= t("UI.net_worth_pace.momentum") %></dt>
+      <dd class="text-sm font-medium font-mono text-primary privacy-sensitive"><%= t("UI.net_worth_pace.per_month", amount: momentum_label) %></dd>
+    </div>
+  <% end %>
+</dl>

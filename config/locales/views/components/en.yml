@@ -12,6 +12,10 @@ en:
         new_payment: New repayment
         unknown: Unknown
         assumptions: "Projected from the recorded rate changes: the repayment is re-amortised over the payments remaining to the original payoff date, any linked offset balance is held at today's total, and no extra repayments are assumed. Your lender's figure may differ slightly through rounding."
+    net_worth_pace:
+      velocity: Velocity
+      momentum: Momentum
+      per_month: "%{amount} / month"
     period_picker:
       aria_label: "Time period: %{period}"
     account:
