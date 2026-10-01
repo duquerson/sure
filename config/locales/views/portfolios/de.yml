@@ -122,6 +122,15 @@ de:
       no_income: Im ausgewählten Zeitraum (%{period}) wurden keine Dividenden oder Zinsen gezahlt.
       period_total: Dividenden und Zinsen im Zeitraum (%{period})
       reversals: Rückbuchungen
+      securities:
+        columns:
+          income: Erträge
+          security: Wertpapier
+          yield_on_cost: Rendite auf Einstandswert
+        total: Summe
+        unattributed: Keinem Wertpapier zugeordnet
+        unattributed_hint: Erträge, zu denen dein Anbieter kein Wertpapier angegeben hat.
+        yield_unavailable: Setzt einen bekannten Einstandswert für jede Position und einen Wechselkurs für jede Währung voraus.
       trailing_total: Letzte 12 Monate
     index_chart:
       explainer: Zu Beginn des Zeitraums auf 100 normiert, ohne den Effekt von Ein- und Auszahlungen. Ein Stand von 121 bedeutet 21% Rendite.

@@ -90,6 +90,109 @@ class Portfolio::SectionRegistryIncomeTest < ActiveSupport::TestCase
                  "income less reversals is the total the drivers table reports"
   end
 
+  # Yield-on-cost is the issue's third exit criterion: trailing income divided
+  # by cost basis. Worked by hand -- AAPL paid 15 and then 5, both inside the
+  # year (the 15 outside the 30-day period), against a cost basis of 10 x 40:
+  #
+  #   (15 + 5) / 400 = 5%
+  #
+  # The table's own amount is the PERIOD's 5, so a yield computed from the amount
+  # on the row (5 / 400 = 1.25%) is the mistake this separates from the right one.
+  test "yield on cost is the trailing income over the cost basis, not the row's period amount" do
+    aapl = securities(:aapl)
+    income_trade account: @account, date: @as_of - 200, amount: 15, security: aapl
+    income_trade account: @account, date: @as_of - 10, amount: 5, security: aapl
+    lay_history
+    holding_snapshot account: @account, date: @as_of, qty: 10, price: 50, cost_basis: 40, security: aapl
+
+    locals = income_locals
+
+    assert_equal [ BigDecimal(5) ], locals[:securities].rows.map(&:amount)
+    assert_in_delta 0.05, locals[:yields].fetch(aapl.id.to_s).to_f, 0.0000001
+  end
+
+  # A yield over a cost basis that covers only some of the position would
+  # overstate it, because the income covers all of it.
+  test "yield on cost is withheld when the cost basis is unknown or the security is no longer held" do
+    aapl = securities(:aapl)
+    msft = securities(:msft)
+    income_trade account: @account, date: @as_of - 10, amount: 5, security: aapl
+    income_trade account: @account, date: @as_of - 9, amount: 6, security: msft
+    lay_history
+    holding_snapshot account: @account, date: @as_of, qty: 10, price: 50, cost_basis: nil, security: aapl
+    # MSFT paid but is not held: sold, or never in this scope.
+
+    yields = income_locals[:yields]
+
+    assert_includes yields.keys, aapl.id.to_s
+    assert_nil yields[aapl.id.to_s], "held without a cost basis: no yield, not a yield of zero"
+    assert_includes yields.keys, msft.id.to_s
+    assert_nil yields[msft.id.to_s], "not held: there is no cost basis to divide by"
+  end
+
+  # The case the guard is for. AAPL is held in two accounts and only one has a
+  # cost basis, so the statement still reports a cost (the known part, 10 x 40)
+  # and flags the rest as missing. The income covers BOTH positions, so dividing
+  # it by that partial cost would overstate the yield.
+  test "yield on cost is withheld when only some of a security's positions have a cost basis" do
+    aapl = securities(:aapl)
+    other = create_portfolio_account(family: @family)
+    income_trade account: @account, date: @as_of - 10, amount: 5, security: aapl
+    lay_history
+    holding_snapshot account: @account, date: @as_of, qty: 10, price: 50, cost_basis: 40, security: aapl
+    holding_snapshot account: other, date: @as_of, qty: 5, price: 50, cost_basis: nil, security: aapl
+
+    row = InvestmentStatement.new(@family, user: nil).holdings_table_rows.find { |held| held.security == aapl }
+    assert row.missing_cost_basis, "the fixture really is a partly known position"
+    assert_equal BigDecimal(400), row.unrealized.previous.amount, "and its cost is still the known part"
+
+    assert_nil income_locals[:yields].fetch(aapl.id.to_s)
+  end
+
+  # A gifted or inherited position can carry a cost basis of zero on purpose.
+  # Dividing by it is not a yield of infinity; it is no yield.
+  test "yield on cost is withheld, not divided by zero, when the cost basis is zero" do
+    aapl = securities(:aapl)
+    income_trade account: @account, date: @as_of - 10, amount: 5, security: aapl
+    lay_history
+    @account.holdings.create!(
+      security: aapl, date: @as_of, qty: 10, price: 50, amount: 500, currency: "USD",
+      cost_basis: 0, cost_basis_locked: true
+    )
+
+    yields = income_locals[:yields]
+
+    assert_includes yields.keys, aapl.id.to_s
+    assert_nil yields[aapl.id.to_s]
+  end
+
+  # Every other ratio on this page is withheld when a rate is missing (R13).
+  test "yield on cost is withheld when a rate is missing" do
+    aapl = securities(:aapl)
+    income_trade account: @account, date: @as_of - 10, amount: 5, security: aapl
+    lay_history
+    holding_snapshot account: @account, date: @as_of, qty: 10, price: 50, cost_basis: 40, security: aapl
+    assert_not_nil income_locals[:yields][aapl.id.to_s], "the control: with rates, there is a yield"
+
+    Portfolio::Performance.any_instance.stubs(:rate_missing?).returns(true)
+
+    assert_nil income_locals[:yields][aapl.id.to_s]
+  end
+
+  # The point of the unattributed bucket, at the level a user sees it.
+  test "the security table and its unattributed row add up to the period's income" do
+    income_trade account: @account, date: @as_of - 10, amount: 5, security: securities(:aapl)
+    income_transaction account: @account, date: @as_of - 9, amount: 7
+    lay_history
+
+    locals = income_locals
+
+    assert_equal BigDecimal(7), locals[:securities].unattributed
+    assert_equal locals[:income][:total],
+                 locals[:securities].rows.sum(BigDecimal(0), &:amount) + locals[:securities].unattributed
+    assert_equal BigDecimal(12), locals[:income][:total]
+  end
+
   # Visible and empty, not absent: see the comment on the registry entry.
   test "a period with no income still shows the section, with no bars" do
     lay_history

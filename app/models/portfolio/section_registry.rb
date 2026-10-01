@@ -164,7 +164,8 @@ class Portfolio::SectionRegistry
           key: "income",
           title: "portfolios.sections.income",
           partial: "portfolios/income",
-          locals: shared_locals.merge(income: income, trailing: trailing_income, bars: income_bars),
+          locals: shared_locals.merge(income: income, trailing: trailing_income, bars: income_bars,
+                                      securities: income_by_security, yields: income_yields),
           visible: true,
           collapsible: true
         },
@@ -590,9 +591,56 @@ class Portfolio::SectionRegistry
     # the day after the same date a year earlier, so the window is a full year
     # and not a year and a day.
     def trailing_income
-      @trailing_income ||= statement.performance(
+      @trailing_income ||= trailing_performance.income
+    end
+
+    def trailing_performance
+      @trailing_performance ||= statement.performance(
         period: Period.custom(start_date: as_of.prev_year + 1.day, end_date: as_of)
-      ).income
+      )
+    end
+
+    # The selected period's income by security. `total` is the figure the bars
+    # and the drivers table report, so the table and its unattributed row add up
+    # to it by construction (see Portfolio::IncomeBySecurity).
+    def income_by_security
+      @income_by_security ||= Portfolio::IncomeBySecurity.new(amounts: income[:by_security], total: income[:total])
+    end
+
+    # Yield-on-cost for each security in the table: the trailing twelve months'
+    # income over the cost basis, { "security-uuid" => fraction or nil }. Every
+    # row has a key, so the partial can tell "no figure" from "not asked for".
+    #
+    # The numerator is the TRAILING income, not the row's period amount. The
+    # row answers "what did it pay in the period you picked" and a yield over
+    # that would move with the picker; a yield is a yearly figure.
+    #
+    # nil, never zero, when it cannot be stated honestly:
+    # - the security is not held, so there is no cost basis to divide by;
+    # - a position's cost basis is unknown (`missing_cost_basis`), because the
+    #   income covers the whole position and the basis only part of it;
+    # - a rate is missing in either window (R13), as every ratio on this page
+    #   is withheld.
+    def income_yields
+      @income_yields ||= begin
+        trailing = Portfolio::IncomeBySecurity.new(amounts: trailing_income[:by_security], total: trailing_income[:total])
+        withheld = performance.rate_missing? || trailing_performance.rate_missing?
+        held = holdings_rows.index_by { |row| row.security.id.to_s }
+
+        income_by_security.rows.to_h do |row|
+          id = row.security.id.to_s
+          [ id, withheld ? nil : yield_on_cost(held[id], trailing.amount_for(id)) ]
+        end
+      end
+    end
+
+    def yield_on_cost(holding_row, trailing_amount)
+      return nil if holding_row.nil? || holding_row.missing_cost_basis
+
+      cost = holding_row.unrealized&.previous&.amount
+      return nil unless cost&.positive?
+
+      trailing_amount / cost
     end
 
     # The bar payload, in the shape and for the reasons realized_gains_bars

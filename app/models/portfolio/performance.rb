@@ -34,8 +34,10 @@ class Portfolio::Performance
   # v4: :mwr changed from an annual rate to a period rate and :annualized_mwr
   # was added, so a v3 entry would serve the old meaning under the new name.
   #
-  # v6: `income` was added (the monthly income series and the fee ratio). A v5
-  # entry has no such key and would serve nil for it until the next sync.
+  # v6: `income` was added to the metrics (the monthly income series and the fee
+  # ratio). It has since moved to an entry of its own (see #income), so a v6
+  # metrics entry carries a key nothing reads; the bump stands because a v5
+  # entry was written before either existed.
   CACHE_VERSION = "v6".freeze
 
   # R5: the balance rows are calendar daily, so the series includes weekends and
@@ -117,12 +119,17 @@ class Portfolio::Performance
     metrics[:drivers]
   end
 
-  # Dividend and interest income by calendar month, and the fees over the same
-  # rows -- see Portfolio::Income#to_h for the keys. A Hash, as #drivers is,
-  # because the metrics are cached and an object would not survive the round
+  # Dividend and interest income by calendar month, by security, and the fees
+  # over the same rows -- see Portfolio::Income#to_h for the keys. A Hash, as
+  # #drivers is, because it is cached and an object would not survive the round
   # trip.
+  #
+  # Its OWN cache entry rather than part of #metrics, and computed only when
+  # asked. The by-security figures cost a query, and the account comparison
+  # builds a Performance per line (up to six) that reads index_series and never
+  # income: folded into the shared blob, every one of them would run it.
   def income
-    metrics[:income]
+    @income ||= Rails.cache.fetch("#{cache_key}_income") { income_metrics(rate_missing?) }
   end
 
   # R13. True when a currency pair had no rate anywhere in the period, in which
@@ -224,7 +231,6 @@ class Portfolio::Performance
         max_drawdown: withhold_time_weighted ? nil : drawdown(returns),
         index_series: withhold_time_weighted ? [] : rebased_index(returns),
         drivers: drivers.to_h,
-        income: income_metrics(rate_missing),
         rate_missing: rate_missing,
         suppressed_dates: rows.select(&:suppressed).map(&:date),
         day_count: rows.size

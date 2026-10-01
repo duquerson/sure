@@ -77,14 +77,17 @@ class Portfolio::Income
   end
 
   # The shape Portfolio::Performance caches. Plain values only, so it survives
-  # Rails.cache the way Portfolio::Drivers#to_h does.
+  # Rails.cache the way Portfolio::Drivers#to_h does. `by_security` is the raw
+  # { "security-uuid" => amount } for Portfolio::IncomeBySecurity, not Security
+  # records, for the same reason.
   def to_h
     {
       buckets: buckets.map { |bucket| { month: bucket.month, amount: bucket.amount } },
       total: total,
       fees: fees,
       average_value: average_value,
-      fee_ratio: fee_ratio
+      fee_ratio: fee_ratio,
+      by_security: daily_returns.income_by_security
     }
   end
 
