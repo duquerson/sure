@@ -222,6 +222,7 @@ class InsightsHelperTest < ActionView::TestCase
   test "every insight type has a meta line label, a title and an icon" do
     Insight::TYPES.each do |type|
       assert I18n.exists?("insights.types.#{type}", :en), "insights.types.#{type} is missing"
+      assert I18n.exists?("insights.titles.#{type}", :en), "insights.titles.#{type} is missing"
       assert InsightsHelper::INSIGHT_ICONS.key?(type), "#{type} has no icon"
     end
   end
@@ -242,13 +243,21 @@ class InsightsHelperTest < ActionView::TestCase
     assert_equal [ "−$800.00", I18n.t("insights.figures.vs_prior_period") ], insight_key_figure(down)
   end
 
-  test "the new types link to the spending narrative page" do
-    %w[spending_pace top_movers].each do |type|
-      action = insight_action(build_insight(type))
+  test "top movers links to the spending narrative page" do
+    action = insight_action(build_insight("top_movers"))
 
-      assert_equal spending_narrative_path, action[:href]
-      assert_equal I18n.t("insights.actions.#{type}"), action[:text]
-    end
+    assert_equal spending_narrative_path, action[:href]
+    assert_equal I18n.t("insights.actions.top_movers"), action[:text]
+  end
+
+  # The pace insight is computed against the household budget (insights are
+  # family-wide), so its link asks the page for that same budget rather than
+  # whichever personal one the reader happens to have.
+  test "spending pace links to the page for the household budget it was computed against" do
+    action = insight_action(build_insight("spending_pace"))
+
+    assert_equal spending_narrative_path(owner: "household"), action[:href]
+    assert_equal I18n.t("insights.actions.spending_pace"), action[:text]
   end
 
   private

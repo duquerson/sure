@@ -1,24 +1,20 @@
 require "test_helper"
 
 class Spending::PaceTest < ActiveSupport::TestCase
-  include EntriesTestHelper
-
   # June 2026 has 30 days, so the elapsed fraction on day N is N/30 and every
   # boundary below is an exact decimal, not a float that merely rounds well.
   START = Date.new(2026, 6, 1)
   FINISH = Date.new(2026, 6, 30)
 
-  def budget(spent:, budgeted: 1000)
-    OpenStruct.new(
-      start_date: START,
-      end_date: FINISH,
-      budgeted_spending: budgeted&.to_d,
-      actual_spending: spent.to_d
-    )
+  # The budget supplies the period and the amount only; what has been spent is
+  # passed in, because it must be the spend through the reference date, not
+  # the budget's whole-month actual_spending.
+  def budget(budgeted: 1000)
+    OpenStruct.new(start_date: START, end_date: FINISH, budgeted_spending: budgeted&.to_d)
   end
 
   def pace(spent:, day:, budgeted: 1000)
-    Spending::Pace.for(budget(spent: spent, budgeted: budgeted), on: Date.new(2026, 6, day))
+    Spending::Pace.for(budget(budgeted: budgeted), on: Date.new(2026, 6, day), spent: spent.to_d)
   end
 
   # The approaching threshold is a 5% tolerance on the straight-line pace:
@@ -73,7 +69,7 @@ class Spending::PaceTest < ActiveSupport::TestCase
   end
 
   test "no budget means no pace" do
-    assert_nil Spending::Pace.for(nil, on: Date.new(2026, 6, 15))
+    assert_nil Spending::Pace.for(nil, on: Date.new(2026, 6, 15), spent: 10.to_d)
   end
 
   test "a budget that has not been set up means no pace" do
@@ -85,29 +81,15 @@ class Spending::PaceTest < ActiveSupport::TestCase
   end
 
   test "a date after the period counts the whole period as elapsed" do
-    result = Spending::Pace.for(budget(spent: 900), on: Date.new(2026, 7, 20))
+    result = Spending::Pace.for(budget, on: Date.new(2026, 7, 20), spent: 900.to_d)
 
     assert_equal 30, result.elapsed_days
     assert_equal :on_track, result.status
   end
 
   test "a date before the period counts as the first day rather than raising" do
-    result = Spending::Pace.for(budget(spent: 10), on: Date.new(2026, 5, 20))
+    result = Spending::Pace.for(budget, on: Date.new(2026, 5, 20), spent: 10.to_d)
 
     assert_equal 1, result.elapsed_days
-  end
-
-  # Wiring check against a real Budget: actual_spending must be the figure the
-  # budget page shows, so the pace cannot disagree with the budget it cites.
-  test "reads spent from the real budget's actual spending" do
-    month = Date.new(2024, 3, 1)
-    budget = Budget.create!(family: families(:dylan_family), start_date: month, end_date: month.end_of_month,
-                            budgeted_spending: 1000, expected_income: 0, currency: "USD")
-    before = Spending::Pace.for(budget, on: month + 9).spent
-
-    create_transaction(date: month + 3, amount: 250)
-    result = Spending::Pace.for(Budget.find(budget.id), on: month + 9)
-
-    assert_equal 250, result.spent - before
   end
 end

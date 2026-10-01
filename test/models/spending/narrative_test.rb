@@ -11,8 +11,8 @@ class Spending::NarrativeTest < ActiveSupport::TestCase
     @user = users(:family_admin)
   end
 
-  def narrative(on: TODAY, family: @family, user: @user)
-    Spending::Narrative.new(family: family, user: user, on: on)
+  def narrative(on: TODAY, family: @family, user: @user, household: false)
+    Spending::Narrative.new(family: family, user: user, on: on, household: household)
   end
 
   def create_budget(user: nil, budgeted: 1000, start_date: Date.new(2024, 3, 1))
@@ -80,11 +80,88 @@ class Spending::NarrativeTest < ActiveSupport::TestCase
     assert_not_equal household, narrative.budget
   end
 
-  test "another family's budget is never used" do
-    Budget.create!(family: families(:empty), start_date: Date.new(2024, 3, 1), end_date: Date.new(2024, 3, 31),
-                   budgeted_spending: 1000, expected_income: 0, currency: "USD")
-
+  # Both directions: the family's own budget is found, and a different family's
+  # budget for the same month is not -- absence alone would also pass for a
+  # lookup that returned nil for everyone.
+  test "another family's budget is never used, and the family's own still is" do
+    other = Budget.create!(family: families(:empty), start_date: Date.new(2024, 3, 1), end_date: Date.new(2024, 3, 31),
+                           budgeted_spending: 1000, expected_income: 0, currency: "USD")
     assert_nil narrative.budget
+
+    own = create_budget(budgeted: 2000)
+
+    assert_equal own, narrative.budget
+    assert_not_equal other, narrative.budget
+  end
+
+  # Pace compares spend with the clock, so spend must be through the reference
+  # date. A transaction dated after it (scheduled, or entered ahead) is part of
+  # the month's budget total but has not happened yet; counting it would call
+  # a month "over" before those days arrive.
+  test "pace counts spend through the reference date only, and agrees with the heatmap" do
+    create_budget(budgeted: 1000)
+    create_transaction(amount: 100, date: Date.new(2024, 3, 5), name: "Past")
+    create_transaction(amount: 1500, date: Date.new(2024, 3, 20), name: "Future")
+    result = narrative(on: Date.new(2024, 3, 14))
+
+    assert_equal 100, result.pace.spent
+    assert_equal :on_track, result.pace.status
+    assert_equal result.heatmap.total, result.pace.spent
+    # The budget's own full-month figure does include the future entry.
+    assert_equal 1600, result.budget.actual_spending
+  end
+
+  test "a household budget that the family has switched off is not used" do
+    @family.update!(personal_budgets: true, household_budget_enabled: true)
+    create_budget(budgeted: 1000)
+
+    assert_not_nil narrative(user: nil, household: true).budget
+
+    @family.update!(household_budget_enabled: false)
+
+    assert_nil narrative(user: nil, household: true).budget
+  end
+
+  test "a household budget is still the only budget when the family keeps no personal ones" do
+    @family.update!(personal_budgets: false, household_budget_enabled: false)
+    budget = create_budget
+
+    assert_equal budget, narrative(user: nil, household: true).budget
+    assert_equal budget, narrative.budget
+  end
+
+  test "asking for the household budget picks it over the viewer's own, and falls back to theirs when it is off" do
+    @family.update!(personal_budgets: true)
+    household = create_budget(budgeted: 1000)
+    personal = create_budget(user: @user, budgeted: 2000)
+
+    assert_equal household, narrative(household: true).budget
+    assert_equal personal, narrative.budget
+
+    @family.update!(household_budget_enabled: false)
+
+    assert_equal personal, narrative(household: true).budget
+  end
+
+  # One account scope for the whole page. A personal budget counts the owner's
+  # own accounts; the viewer's finance accounts also include accounts shared
+  # with them. Spending on a shared account must not show up as a mover or in
+  # the grid while being absent from the pace it sits beside.
+  test "pace, movers and heatmap share the budget's account scope" do
+    @family.update!(personal_budgets: true)
+    create_budget(user: @user, budgeted: 1000)
+    member = users(:family_member)
+    shared = Account.create!(family: @family, owner: member, name: "Shared in", balance: 0, currency: "USD", accountable: Depository.new)
+    AccountShare.create!(account: shared, user: @user, permission: "read_only", include_in_finances: true)
+    assert_includes @user.finance_accounts.pluck(:id), shared.id, "precondition: the viewer counts the shared account"
+    category = @family.categories.create!(name: "Narrative shared", color: "#101010", lucide_icon: "circle")
+    create_transaction(account: shared, category: category, amount: 400, date: Date.new(2024, 3, 5), name: "Shared spend")
+    result = narrative
+
+    assert_equal 0, result.pace.spent
+    assert_equal 0, result.heatmap.total
+    assert_empty result.top_movers.select { |m| m.category.id == category.id }
+    assert_equal 0, result.previous_spend
   end
 
   test "previous spend is the net spend of the previous window, and zero when there is none" do

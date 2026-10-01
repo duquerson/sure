@@ -87,7 +87,7 @@ class SpendingNarrativesHelperTest < ActionView::TestCase
     category = family.categories.create!(name: "Row Dining", color: "#101010", lucide_icon: "circle")
     create_transaction(category: category, amount: 80, date: Date.new(2024, 3, 4), name: "Mon")
     create_transaction(category: category, amount: 20, date: Date.new(2024, 3, 6), name: "Wed")
-    heatmap = Spending::Heatmap.new(family: family, period: PERIOD, user: nil)
+    heatmap = Spending::Heatmap.new(income_statement: family.income_statement(user: nil), period: PERIOD)
 
     rows = spending_heatmap_rows(heatmap)
 

@@ -129,8 +129,12 @@ module InsightsHelper
     when "maintained_goal_depleted"
       goal = insight.family.goals.find_by(id: metadata["goal_id"])
       goal && { text: t("insights.actions.maintained_goal_depleted"), href: goal_path(goal) }
-    when "spending_pace", "top_movers"
-      { text: t("insights.actions.#{insight.insight_type}"), href: spending_narrative_path }
+    when "spending_pace"
+      # Computed against the household budget (insights are family-wide), so the
+      # page is asked for that budget rather than the reader's own.
+      { text: t("insights.actions.spending_pace"), href: spending_narrative_path(owner: "household") }
+    when "top_movers"
+      { text: t("insights.actions.top_movers"), href: spending_narrative_path }
     end
   end
 

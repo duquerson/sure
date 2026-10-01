@@ -81,11 +81,38 @@ class Insight::Generators::SpendingPaceGeneratorTest < ActiveSupport::TestCase
     assert_empty generate(on: Date.new(2024, 3, 14))
   end
 
+  # The viewed family has its own on-track budget, so a leak of the other
+  # family's 5,000 would tip it over and the test would see an insight; with no
+  # budget at all the generator would exit early and prove nothing.
   test "another family's budget and spending are ignored" do
+    create_budget(budgeted: 1000)
+    spend(100)
     other = families(:empty)
     create_budget(family: other, budgeted: 10)
     account = Account.create!(family: other, name: "Other", balance: 0, currency: "USD", accountable: Depository.new)
     Entry.create!(account: account, name: "Other", date: MONTH + 1, currency: "USD", amount: 5000, entryable: Transaction.new)
+
+    assert_empty generate(on: Date.new(2024, 3, 14))
+    assert_equal 1, Insight::Generators::SpendingPaceGenerator.new(other, today: Date.new(2024, 3, 14)).generate.size
+  end
+
+  # The budget's own total is the whole month; the pace is against the clock.
+  test "spend dated after the reference date does not make the month look over" do
+    create_budget
+    spend(100, Date.new(2024, 3, 5))
+    spend(1500, Date.new(2024, 3, 20)) # entered ahead of time
+
+    assert_empty generate(on: Date.new(2024, 3, 14))
+    assert_equal 1, generate(on: Date.new(2024, 3, 20)).size
+  end
+
+  test "a household budget the family has switched off produces nothing" do
+    @family.update!(personal_budgets: true, household_budget_enabled: true)
+    create_budget
+    spend(1500)
+    assert_equal 1, generate(on: Date.new(2024, 3, 14)).size
+
+    @family.update!(household_budget_enabled: false)
 
     assert_empty generate(on: Date.new(2024, 3, 14))
   end

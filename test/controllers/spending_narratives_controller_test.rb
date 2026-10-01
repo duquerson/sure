@@ -90,6 +90,35 @@ class SpendingNarrativesControllerTest < ActionDispatch::IntegrationTest
     assert_select "[data-testid=pace-status]", text: I18n.t("spending_narratives.show.pace.status.approaching")
   end
 
+  test "spend dated after today does not make the page say over budget" do
+    create_budget
+    spend(100, Date.new(2024, 3, 5))
+    spend(1500, Date.new(2024, 3, 20))
+
+    visit
+
+    assert_select "[data-testid=pace-status]", text: I18n.t("spending_narratives.show.pace.status.on_track")
+  end
+
+  # The pace insight is the household's, and links here with owner=household so
+  # the page shows the budget the card was about, not the reader's own.
+  test "owner=household shows the household budget; the default shows the viewer's own" do
+    @family.update!(personal_budgets: true)
+    Budget.create!(family: @family, start_date: Date.new(2024, 3, 1), end_date: Date.new(2024, 3, 31),
+                   budgeted_spending: 1000, expected_income: 0, currency: "USD")
+    Budget.create!(family: @family, user: @user, start_date: Date.new(2024, 3, 1), end_date: Date.new(2024, 3, 31),
+                   budgeted_spending: 9000, expected_income: 0, currency: "USD")
+    spend(1300, Date.new(2024, 3, 3))
+
+    visit
+    assert_select "[data-testid=pace-status]", text: I18n.t("spending_narratives.show.pace.status.on_track")
+    assert_select "[data-testid=pace]", text: /\$9,000\.00/
+
+    travel_to(TODAY) { get spending_narrative_url(owner: "household") }
+    assert_select "[data-testid=pace-status]", text: I18n.t("spending_narratives.show.pace.status.over")
+    assert_select "[data-testid=pace]", text: /\$1,000\.00/
+  end
+
   test "a top mover links to that category's transactions over the period" do
     spend(100, Date.new(2024, 2, 20))
     spend(700, Date.new(2024, 3, 3))

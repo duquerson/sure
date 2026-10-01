@@ -25,7 +25,7 @@ class Spending::HeatmapTest < ActiveSupport::TestCase
   end
 
   def heatmap(user: nil, family: @family, period: PERIOD)
-    Spending::Heatmap.new(family: family, period: period, user: user)
+    Spending::Heatmap.new(income_statement: family.income_statement(user: user), period: period)
   end
 
   def cell(map, date)
@@ -110,6 +110,19 @@ class Spending::HeatmapTest < ActiveSupport::TestCase
     assert_equal 0, cell(heatmap, Date.new(2024, 3, 4)).total
     assert_equal 0, cell(heatmap, Date.new(2024, 3, 6)).total
     assert_equal 0, heatmap.total
+  end
+
+  # entries.excluded is nullable, and the income statement's `excluded = false`
+  # drops a NULL row. The grid must drop it too: its total is meant to equal the
+  # budget's, and a row one counts and the other does not breaks that.
+  test "an entry whose excluded flag is NULL is treated as the income statement treats it" do
+    spend(100, Date.new(2024, 3, 4), category: @dining)
+    odd = spend(70, Date.new(2024, 3, 5), category: @dining)
+    odd.update_column(:excluded, nil)
+
+    statement_total = @family.income_statement(user: nil).net_category_totals(period: PERIOD).total_net_expense
+
+    assert_equal statement_total, heatmap.total
   end
 
   test "pending transactions add nothing, as in the income statement" do

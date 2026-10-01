@@ -33,7 +33,7 @@ class Insight::Generators::SpendingPaceGenerator < Insight::Generator
     # No viewer: insights are family-wide, so this resolves the household
     # budget (or the only one) exactly as the nightly generators always have.
     def narrative
-      @narrative ||= Spending::Narrative.new(family: family, user: nil, on: today)
+      @narrative ||= Spending::Narrative.new(family: family, user: nil, on: today, household: true)
     end
 
     def pace_insight(budget, pace)

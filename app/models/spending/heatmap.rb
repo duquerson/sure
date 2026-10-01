@@ -14,8 +14,10 @@
 # accounts, transfers and excluded entries left out) is shared with the income
 # statement through Spending::DailyCategoryTotals.
 #
-# `user` must be the one the income statement being compared against was built
-# for: it decides which accounts count.
+# It takes the income statement rather than a user: the statement carries the
+# account scope (a personal budget's owner's accounts, or the viewer's finance
+# accounts), and reusing it is what keeps the grid, the movers and the pace on
+# one set of accounts.
 class Spending::Heatmap
   WEEK_START = :sunday # matches the Bills calendar
 
@@ -24,10 +26,10 @@ class Spending::Heatmap
 
   attr_reader :period
 
-  def initialize(family:, period:, user: nil)
-    @family = family
+  def initialize(income_statement:, period:)
+    @income_statement = income_statement
+    @family = income_statement.family
     @period = period
-    @user = user
   end
 
   # Rows of seven cells, Sunday first. A date outside the period is nil, so it
@@ -68,7 +70,7 @@ class Spending::Heatmap
   end
 
   private
-    attr_reader :family, :user
+    attr_reader :family, :income_statement
 
     # { date => net total }, over net-expense categories only.
     def daily_totals
@@ -83,6 +85,6 @@ class Spending::Heatmap
     end
 
     def included_account_ids
-      user&.finance_accounts&.pluck(:id)
+      income_statement.included_account_ids
     end
 end

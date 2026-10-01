@@ -38,6 +38,10 @@ class InsightsControllerTest < ActionDispatch::IntegrationTest
     create_transaction(category: category, amount: 100, date: Date.new(2024, 2, 20), name: "Prior dining")
     create_transaction(category: category, amount: 1300, date: Date.new(2024, 3, 3), name: "Current dining")
 
+    # The fixture user has AI enabled; without this the job could call a real
+    # provider. The template body is what is under test.
+    Provider::Registry.stubs(:preferred_llm_provider).returns(nil)
+
     assert_no_difference -> { DebugLogEntry.where(category: "insights").count } do
       travel_to Date.new(2024, 3, 14) do
         GenerateInsightsJob.perform_now(family_id: family.id)
@@ -60,7 +64,7 @@ class InsightsControllerTest < ActionDispatch::IntegrationTest
       assert_select "h3", text: /over budget/i
       assert_select "p", text: /\$1,300\.00/
       assert_select "p", text: "$300.00"
-      assert_select "a[href=?]", spending_narrative_path
+      assert_select "a[href=?]", spending_narrative_path(owner: "household")
     end
     assert_select "##{ActionView::RecordIdentifier.dom_id(movers)}" do
       assert_select "h3", text: /Narrative Dining rose the most/

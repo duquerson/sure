@@ -28,11 +28,16 @@ class Spending::Pace
   # nil when there is nothing to measure against: no budget, one that has not
   # been set up (nil amount) or a zero amount. A pace is a ratio to the budget,
   # so without a positive one it has no meaning.
-  def self.for(budget, on:)
+  #
+  # `spent` is required and is the spend through `on`. It is deliberately not
+  # read from the budget: Budget#actual_spending covers the whole month, which
+  # includes anything dated after `on`, and a pace is spend measured against the
+  # days that have actually elapsed.
+  def self.for(budget, on:, spent:)
     return nil unless budget && budget.budgeted_spending.to_d.positive?
 
     new(
-      spent: budget.actual_spending.to_d,
+      spent: spent.to_d,
       budgeted: budget.budgeted_spending.to_d,
       start_date: budget.start_date,
       end_date: budget.end_date,
