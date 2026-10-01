@@ -123,6 +123,12 @@ class Transaction < ApplicationRecord
   PENDING_FLAG_FALSE_VALUES = (ActiveModel::Type::Boolean::FALSE_VALUES.grep(String) + [ "" ]).uniq.freeze
   PENDING_FLAG_TYPE = ActiveModel::Type::Boolean.new.freeze
 
+  # PENDING_FLAG_FALSE_VALUES as a list of SQL string literals. Built from the
+  # constant alone, so class loading needs no database connection, and shared by
+  # pending_sql and PENDING_CHECK_SQL so the two cannot quote the values
+  # differently.
+  PENDING_FLAG_FALSE_VALUES_SQL = PENDING_FLAG_FALSE_VALUES.map { |value| "'#{value.gsub("'", "''")}'" }.join(", ").freeze
+
   # Canonical reusable SQL form of the pending? decision. Callers that inspect
   # only provider namespaces they own can pass that subset in `providers:`.
   #
@@ -141,33 +147,51 @@ class Transaction < ApplicationRecord
   # parity test carries the case.
   def self.pending_sql(table_alias = "transactions", providers: PENDING_PROVIDERS)
     quoted_table = connection.quote_table_name(table_alias)
-    false_values = pending_flag_false_values_sql
     selected_providers = Array(providers).map(&:to_s).uniq & PENDING_PROVIDERS
     return "FALSE" if selected_providers.empty?
 
     selected_providers
       .map do |provider|
-        "COALESCE(#{quoted_table}.extra -> #{connection.quote(provider)} ->> #{connection.quote("pending")}, #{connection.quote("")}) NOT IN (#{false_values})"
+        "COALESCE(#{quoted_table}.extra -> #{connection.quote(provider)} ->> #{connection.quote("pending")}, #{connection.quote("")}) NOT IN (#{PENDING_FLAG_FALSE_VALUES_SQL})"
       end
       .join(" OR ")
       .then { |predicate| "(#{predicate})" }
   end
 
-  def self.pending_flag_false_values_sql
-    @pending_flag_false_values_sql ||= PENDING_FLAG_FALSE_VALUES.map { |value| connection.quote(value) }.join(", ").freeze
-  end
-
-  # A fixed-alias fragment for correlated SQL. Keep it as a constant so static
-  # analysis can verify that the raw SQL is built only from provider constants.
-  PENDING_CHECK_SQL = pending_sql("t").freeze
-
-  def self.pending_check_sql
-    PENDING_CHECK_SQL
+  # Fixed-alias fragment for correlated SQL. Build from model constants without
+  # borrowing a database connection during class loading.
+  PENDING_CHECK_SQL = begin
+    PENDING_PROVIDERS
+      .map do |provider|
+        "COALESCE(t.extra -> '#{provider}' ->> 'pending', '') NOT IN (#{PENDING_FLAG_FALSE_VALUES_SQL})"
+      end
+      .join(" OR ")
+      .then { |predicate| "(#{predicate})" }
+      .freeze
   end
 
   # The negation of pending_sql, for queries that must leave pending rows out.
   def self.not_pending_sql(table_alias = "transactions", providers: PENDING_PROVIDERS)
     "NOT (#{pending_sql(table_alias, providers: providers)})"
+  end
+
+  # The Ruby form of the same decision, over a provider metadata hash rather
+  # than a record. #pending? is this method; the import adapter also needs it
+  # before any record exists, for the payload it is about to write.
+  #
+  # Reads keys as strings, so pass string-keyed metadata or a
+  # HashWithIndifferentAccess. A provider key holding anything but an object
+  # says nothing about that provider and is skipped, as pending_sql skips it:
+  # Hash#dig would instead raise on a scalar and take the whole caller with it.
+  def self.pending_extra?(extra)
+    return false unless extra.is_a?(Hash)
+
+    PENDING_PROVIDERS.any? do |provider|
+      provider_data = extra[provider]
+      provider_data.is_a?(Hash) && PENDING_FLAG_TYPE.cast(provider_data["pending"])
+    end
+  rescue StandardError
+    false
   end
 
   # Pending transaction scopes - filter based on provider pending flags in extra JSONB
@@ -178,6 +202,14 @@ class Transaction < ApplicationRecord
 
   # SQL snippet for raw queries that must exclude pending transactions.
   # Use in income statements, balance sheets, and raw analytics.
+  #
+  # Emits a LEADING `AND`, so it appends to a WHERE that already has at least
+  # one condition -- which is how all three callers use it
+  # (IncomeStatement::FamilyStats, ::CategoryStats, ::ScopedTransactionsQuery),
+  # interpolating it after their own `AND` clauses. As the first condition in a
+  # WHERE it produces `WHERE AND NOT (...)`, a syntax error. Use
+  # `not_pending_sql` for that position; this method is only the `AND`-prefixed
+  # form of it.
   def self.pending_providers_sql(table_alias = "t", providers: PENDING_PROVIDERS)
     "AND #{not_pending_sql(table_alias, providers: providers)}"
   end
@@ -224,16 +256,7 @@ class Transaction < ApplicationRecord
   end
 
   def pending?
-    extra_data = extra.is_a?(Hash) ? extra : {}
-    PENDING_PROVIDERS.any? do |provider|
-      # A provider key holding anything but an object says nothing about that
-      # provider. Skip it, as pending_sql does, rather than let Hash#dig raise
-      # and the rescue below hide every other provider's flag.
-      provider_data = extra_data[provider]
-      provider_data.is_a?(Hash) && PENDING_FLAG_TYPE.cast(provider_data["pending"])
-    end
-  rescue StandardError
-    false
+    self.class.pending_extra?(extra)
   end
 
   def activity_security_id
