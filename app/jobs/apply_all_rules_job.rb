@@ -4,7 +4,7 @@ class ApplyAllRulesJob < ApplicationJob
   # @param family [Family]
   # @return [Integer] the Postgres advisory lock key shared by every pass for the family
   def self.lock_key(family)
-    Digest::MD5.hexdigest("apply_all_rules:#{family.id}").to_i(16) % (2**62)
+    Digest::SHA256.hexdigest("apply_all_rules:#{family.id}").to_i(16) % (2**62)
   end
 
   # @param family [Family]
