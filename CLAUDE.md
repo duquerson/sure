@@ -127,17 +127,28 @@ from this fork.
    deciding whether the two PRs are the same change: where they share a branch,
    "same branch, same commit"; where the fork pre-flight is a cherry-pick onto
    the mirror, say that instead.
+9. **A feedback check includes every poster** *(both repos)*. When asked to
+   check for feedback since a given time, include every issue comment, review
+   and inline thread posted in that window, whatever account posted it. The
+   Gatekeeper review, the nightly `## PR DAILY SWEEP` and the production-readiness
+   reviews all post as `jaysbeekay`, the same login the owner's replies use, so
+   "the last comment is ours" proves nothing. Classify each item by its content,
+   and count a review as answered only when a later comment replies to it,
+   citing its id. Filtering by author hid the unanswered sweeps on #211 and
+   #248 on 2026-10-01.
 
 ### Issue and pull request sequence (this fork)
 
 Follow this sequence for any issue-driven change. Do not skip or reorder steps.
+It governs project code only. A change to these working rules in `CLAUDE.md`
+goes straight to `main`, without an issue or a draft PR.
 
-1. **Raise the issue and wait for its Gatekeeper review.** Do not edit the issue
-   or start a PR until the review has landed and been validated.
-2. **Re-read the issue.** Fetch it fresh, including every comment. Requirements
-   and decisions are frequently added in comments after the body was written.
-3. **Post a detailed triage plan as a comment under that issue** before any PR
-   work. Every issue gets its own plan. It must state:
+1. **Raise the issue with its triage plan in the body**, and wait for its
+   Gatekeeper review. The Gatekeeper reviews the issue and its plan as one.
+   Do not edit the issue or start a PR until the review has landed and been
+   validated. Every issue gets its own plan, and the body carries, in order:
+   the problem, as observed behaviour; the proof/evidence; the blast radius;
+   and the triage plan, which must state:
    - **What the issue actually is** -- the defect or requirement in terms of
      observed behaviour, not a restatement of the title.
    - **What the PR will touch** -- files, classes and methods, and the blast
@@ -150,6 +161,13 @@ Follow this sequence for any issue-driven change. Do not skip or reorder steps.
    - **The evidence required** -- what will demonstrate that it fixes the issue,
      and that it will not introduce future defects: neighbouring callers,
      regression coverage and a full-suite run.
+2. **Re-read the issue.** Fetch it fresh, including every comment. Requirements
+   and decisions are frequently added in comments after the body was written.
+3. **Validate the review and settle the plan before any PR work.** Check each
+   finding against the current code, then fix or decline it with evidence, as
+   rule 7 already requires. Where a finding changes the plan, record the
+   revision in the issue body in place -- the revision goes into the plan
+   itself, not a separate revised-plan comment.
 4. **Open the change as a DRAFT pull request** following that plan. Wait for the
    light-touch Gatekeeper review. Do not work on fixes until it has landed and its
    feedback has been validated.
@@ -188,6 +206,46 @@ Two corollaries:
 - **Prove the test before trusting it.** Break the fix deliberately and watch
   the new test fail. A test written after a fix tends to assert the author's
   mental model, which is the thing that was wrong.
+
+#### The other direction: grep the siblings, not just the callers
+
+The question above points **downstream**, at whoever calls the line being
+changed. It does not catch the miss that keeps happening, which is **lateral**:
+other code reading the same source, which should have changed alongside it.
+
+So ask a second question before pushing:
+
+> **What else reads what I just changed the reading of?**
+
+Both of these were missed by the author on #226 and caught in review, and
+both were one grep away:
+
+- A parent filter was threaded into `allocation_holdings_within`'s look-through
+  branch. `holdings_classified_as` -- the flat branch's selector -- had the
+  identical defect and was left alone, so half the ladder stayed broken.
+- `allocatable_holdings` was introduced to exclude corrupt rows, and the child
+  paths were routed through it. Four parent segment builders
+  (`allocation_by_classification`, `_by_currency`, `_by_kind`, `_by_tag`) still
+  read `current_holdings`, so the levels disagreed one step above where the
+  test was looking.
+
+**How to apply.**
+
+- **When a fix replaces a direct use of X with a new helper, `grep -n "X"` and
+  enumerate every remaining use.** Each is either deliberately unchanged with a
+  stated reason, or a sibling that was missed. Write the list out; do not
+  eyeball it. Say in the commit message which siblings were found and why any
+  were left.
+- **A method with two paths is an invitation to fix half a bug.** Wherever there
+  is `if look_through ... else ...`, cached/uncached, sync/async -- fixing one
+  path means checking the other in the same change.
+- **Assert a new invariant at every level it claims to hold**, not at the level
+  being edited. Both misses above had the matching test gap: the assertion sat
+  where the author was already looking.
+- **Treat a review finding as a symptom report, not a work order.** A reviewer
+  names one call site because that is where they happened to look; the defect
+  lives wherever the pattern does. Shipping the narrow fix means the next review
+  finds the siblings, at the cost of a full cycle each time.
 
 ### Assert the delta, not the presence
 
