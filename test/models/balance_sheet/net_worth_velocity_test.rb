@@ -132,6 +132,24 @@ class BalanceSheet::NetWorthVelocityTest < ActiveSupport::TestCase
     assert_nil velocity.velocity
   end
 
+  # The issue names NetWorthBreakdownSeriesBuilder#breakdown_series as the source,
+  # which also keeps the figure on the series the Reports page draws.
+  test "velocity and momentum are read from the breakdown series, one window each" do
+    track(history_from: @prior.start_date) { 10_000 }
+    points = ->(from, to) { [ { date: @period.start_date, value: Money.new(from, "USD") }, { date: @period.end_date, value: Money.new(to, "USD") } ] }
+    current_window = { values: points.call(10_000, 12_900) }
+    prior_window = { values: [ { date: @prior.start_date, value: Money.new(10_000, "USD") }, { date: @prior.end_date, value: Money.new(10_580, "USD") } ] }
+    BalanceSheet::NetWorthBreakdownSeriesBuilder.any_instance.expects(:breakdown_series)
+      .with(period: @period).returns(current_window)
+    BalanceSheet::NetWorthBreakdownSeriesBuilder.any_instance.expects(:breakdown_series)
+      .with(period: velocity.prior_period).returns(prior_window)
+
+    result = velocity
+
+    assert_in_delta 2_900 / 29.0 * DAYS_PER_MONTH, result.velocity.amount, 0.01
+    assert_in_delta (2_900 / 29.0 - 580 / 29.0) * DAYS_PER_MONTH, result.momentum.amount, 0.01
+  end
+
   test "a single-day period has no velocity" do
     track(history_from: @prior.start_date) { 10_000 }
     one_day = Period.custom(start_date: @today, end_date: @today)

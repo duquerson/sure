@@ -1,11 +1,16 @@
 # How fast net worth is moving over a period (velocity, per month) and how that
 # pace compares with the period immediately before it (momentum).
 #
-# Both are read from `BalanceSheet#net_worth_series`: the series the dashboard
-# chart is drawn from, so the figures can never disagree with the trend printed
-# above them, and it already honours the viewer's account visibility. Amounts
-# are BigDecimal throughout and are not rounded here; `Money#format` rounds for
-# display, which is the only rounding point.
+# Both are read from `BalanceSheet::NetWorthBreakdownSeriesBuilder#breakdown_series`,
+# the series the Reports page draws, which already honours the viewer's account
+# visibility and is cached per period. Its first and last points are always the
+# window's own start and end dates, whatever the interval. Amounts are BigDecimal
+# throughout; the series hands them over already rounded to the currency's display
+# precision, and `Money#format` is the only rounding applied here.
+#
+# Cost: each call builds the per-group series as well, which velocity does not
+# use, and the dashboard asks for two windows (this period and the one before).
+# Both are cached.
 #
 # Velocity and momentum are withheld (nil) rather than guessed when the family's
 # history does not cover the whole window they compare. Net worth reads zero
@@ -48,15 +53,19 @@ class BalanceSheet::NetWorthVelocity
     def monthly_pace(window)
       return nil unless history_covers?(window)
 
-      values = balance_sheet.net_worth_series(period: window).values
-      return nil if values.size < 2
+      points = breakdown_builder.breakdown_series(period: window)[:values]
+      return nil if points.size < 2
 
-      first, last = values.first, values.last
-      days = (last.date - first.date).to_i
+      first, last = points.first, points.last
+      days = (last[:date] - first[:date]).to_i
       return nil unless days.positive?
 
-      per_day = (amount_of(last.value) - amount_of(first.value)) / days
+      per_day = (amount_of(last[:value]) - amount_of(first[:value])) / days
       Money.new(per_day * DAYS_PER_MONTH, balance_sheet.currency)
+    end
+
+    def breakdown_builder
+      @breakdown_builder ||= BalanceSheet::NetWorthBreakdownSeriesBuilder.new(balance_sheet.family, user: balance_sheet.user)
     end
 
     def amount_of(value)
