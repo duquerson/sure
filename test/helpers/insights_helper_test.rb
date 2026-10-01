@@ -178,6 +178,38 @@ class InsightsHelperTest < ActionView::TestCase
     assert_nil insight_action(dangling)
   end
 
+  test "stale valuation action opens the valuation form for that account in the modal" do
+    account = accounts(:property)
+    insight = build_insight("stale_valuation", metadata: { "account_id" => account.id })
+
+    action = insight_action(insight)
+
+    assert_equal new_valuation_path(account_id: account.id), action[:href]
+    assert_equal :modal, action[:frame]
+    assert_equal "Update value", action[:text]
+  end
+
+  test "stale valuation action disappears when the account does not resolve" do
+    insight = build_insight("stale_valuation", metadata: { "account_id" => SecureRandom.uuid })
+
+    assert_nil insight_action(insight)
+  end
+
+  test "only the stale valuation action targets the modal frame" do
+    account = accounts(:property)
+    other = build_insight("idle_cash", metadata: { "account_id" => account.id })
+
+    assert_nil insight_action(other)[:frame]
+  end
+
+  test "stale valuation key figure is the balance with the days unvalued" do
+    insight = build_insight("stale_valuation", facts: { "balance" => "$550,000.00", "days" => 91 })
+
+    assert_equal [ "$550,000.00", "unvalued 91 days" ], insight_key_figure(insight)
+    assert_equal "calendar-clock", insight_icon_key(insight)
+    assert_equal :warning, insight_sentiment(insight)
+  end
+
   test "maintained reserve metadata and action render in German" do
     family = families(:dylan_family)
     goal = family.goals.first

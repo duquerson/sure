@@ -22,6 +22,38 @@ class Settings::PreferencesControllerTest < ActionDispatch::IntegrationTest
     assert_select "select[name='user[family_attributes][currency]']", count: 0
   end
 
+  test "the stale valuation threshold is offered to an admin with preview features, at the family's value" do
+    user = users(:family_admin)
+    user.update!(preferences: (user.preferences || {}).merge("preview_features_enabled" => true))
+    user.family.update!(stale_valuation_days: 120)
+
+    get settings_preferences_url
+
+    assert_response :success
+    assert_select "select[name='user[family_attributes][stale_valuation_days]']" do
+      assert_select "option[value='120'][selected]", text: "120 days"
+      assert_select "option[value='90']", text: "90 days"
+    end
+  end
+
+  test "the stale valuation threshold is not offered without preview features" do
+    get settings_preferences_url
+
+    assert_response :success
+    assert_select "select[name='user[family_attributes][stale_valuation_days]']", count: 0
+  end
+
+  test "the stale valuation threshold is not offered to a non-admin" do
+    member = users(:family_member)
+    member.update!(preferences: (member.preferences || {}).merge("preview_features_enabled" => true))
+    sign_in member
+
+    get settings_preferences_url
+
+    assert_response :success
+    assert_select "select[name='user[family_attributes][stale_valuation_days]']", count: 0
+  end
+
   test "renders preview features toggle for non-admin users too" do
     sign_in users(:family_member)
     get settings_preferences_url
