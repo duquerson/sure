@@ -20,6 +20,8 @@ class Spending::DailyCategoryTotals
     @period = period
     @date_range = period.date_range
     @included_account_ids = included_account_ids
+
+    validate_date_range!
   end
 
   def call
