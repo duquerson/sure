@@ -138,11 +138,23 @@ class Loan < ApplicationRecord
     amortization_schedule.monthly_payment
   end
 
+  # The account this loan is being saved through, when it is. `loan.account` is
+  # read from the database (and is nil for a loan being created), so on a save
+  # through the account it describes the account as it WAS: a request that changes
+  # the currency and the collateral together would be judged on the old currency.
+  # Account hands itself over before validating; a loan saved on its own falls
+  # back to `account`.
+  attr_writer :owning_account
+
+  def owning_account
+    @owning_account || account
+  end
+
   # What is wrong with the link as it stands: an id that names no account is
   # refused here, as the foreign key would otherwise raise it as a server error,
   # and a blank id is simply no link. Used by the validation and, for a loan being
   # created, by Account.
-  def collateral_problems(loan_account: self.account)
+  def collateral_problems(loan_account: owning_account)
     return [] if collateral_account_id.blank?
     return [ "does not exist" ] if collateral_account.nil?
 
@@ -155,7 +167,9 @@ class Loan < ApplicationRecord
   #
   # The checks that need the loan's own account are skipped until it exists: a
   # loan being created is validated before it is attached to one.
-  def collateral_ineligibilities_for(account, loan_account: self.account)
+  # `viewers` lets a caller judging many accounts against one loan work the
+  # loan's viewers out once instead of once per account.
+  def collateral_ineligibilities_for(account, loan_account: owning_account, viewers: nil)
     return [] if account.nil?
 
     unless COLLATERAL_ACCOUNTABLE_TYPES.include?(account.accountable_type)
@@ -164,14 +178,14 @@ class Loan < ApplicationRecord
 
     problems = []
 
-    if loan_account
+    if loan_account&.family
       # Another family's account has no standing to be visible to this one's
       # viewers, so the family is the only thing worth saying about it.
       return [ "must belong to the same family as the loan" ] unless account.family_id == loan_account.family_id
 
       problems << "must use the same currency as the loan" unless account.currency == loan_account.currency
 
-      invisible = collateral_viewers(loan_account).reject { |user| account.shared_with?(user) }
+      invisible = (viewers || collateral_viewers(loan_account)).reject { |user| account.shared_with?(user) }
       if invisible.any?
         problems << "must be visible to every loan viewer (missing: #{invisible.map(&:display_name).join(", ")})"
       end
@@ -191,8 +205,11 @@ class Loan < ApplicationRecord
     scope = Account.accessible_by(viewer).visible
       .where(family_id: family.id, accountable_type: COLLATERAL_ACCOUNTABLE_TYPES)
     scope = scope.where(currency: currency) if currency.present? && loan.account.nil?
+
+    loan_account = loan.owning_account
+    viewers = loan.send(:collateral_viewers, loan_account) if loan_account&.family
     scope.order(:name)
-      .select { |candidate| loan.collateral_ineligibilities_for(candidate).empty? }
+      .select { |candidate| loan.collateral_ineligibilities_for(candidate, loan_account: loan_account, viewers: viewers).empty? }
   end
 
   # Drops both memoized calculators after an offset link changes. Offsets alter

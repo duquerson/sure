@@ -261,6 +261,35 @@ class LoansControllerTest < ActionDispatch::IntegrationTest
     assert_equal property.id, @account.loan.reload.collateral_account_id
   end
 
+  # The loan's own validation used to read the persisted account, so a request
+  # that changes the currency and the asset together was judged on the old one.
+  test "changing the currency and the collateral in one request is judged on the new currency" do
+    euro_property = @account.family.accounts.create!(
+      name: "Flat in Lisbon", currency: "EUR", balance: 300_000, owner: @user, accountable: Property.new
+    )
+    euro_property.auto_share_with_family!
+
+    patch loan_path(@account), params: {
+      account: { currency: "EUR", accountable_attributes: { id: @account.accountable_id, collateral_account_id: euro_property.id } }
+    }
+
+    assert_redirected_to @account
+    assert_equal "EUR", @account.reload.currency
+    assert_equal euro_property.id, @account.loan.collateral_account_id
+  end
+
+  test "changing the currency away from the collateral's in the same request is refused" do
+    property = accounts(:property)
+
+    patch loan_path(@account), params: {
+      account: { currency: "EUR", accountable_attributes: { id: @account.accountable_id, collateral_account_id: property.id } }
+    }
+
+    assert_response :unprocessable_entity
+    assert_equal "USD", @account.reload.currency
+    assert_nil @account.loan.collateral_account_id
+  end
+
   test "a blank collateral clears the link" do
     @account.loan.update!(collateral_account: accounts(:property))
 

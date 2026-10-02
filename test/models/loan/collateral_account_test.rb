@@ -7,6 +7,16 @@ class Loan::CollateralAccountTest < ActiveSupport::TestCase
     @vehicle = accounts(:vehicle)
   end
 
+  test "the candidate list works out the loan's viewers once, not once per candidate" do
+    family = @loan.account.family
+    candidates = Account.where(family: family, accountable_type: %w[Property Vehicle]).count
+    assert_operator candidates, :>, 1, "precondition: more than one candidate to judge"
+
+    Loan.any_instance.expects(:collateral_viewers).once.returns(@loan.account.family.users.to_a)
+
+    Loan.collateral_candidates_for(@loan, viewer: users(:family_admin))
+  end
+
   test "a loan can be secured by a property or a vehicle" do
     assert_nil @loan.collateral_account_id
 

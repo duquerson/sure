@@ -67,6 +67,28 @@ class Family::DataImporterTest < ActiveSupport::TestCase
     assert_equal "House", loan.collateral_account.name
   end
 
+  # The whole path: export a family whose loan sorts before its asset by id, then
+  # restore it with each account in a chunk of its own, in order.
+  test "an exported loan is relinked when each account arrives in its own chunk" do
+    source = Family.create!(name: "Source family")
+    loan_account = source.accounts.create!(
+      id: "00000000-0000-4000-8000-000000000001", name: "Mortgage", balance: 400_000, currency: "USD", accountable: Loan.new
+    )
+    asset = source.accounts.create!(
+      id: "ffffffff-ffff-4fff-8fff-ffffffffffff", name: "House", balance: 500_000, currency: "USD", accountable: Property.new
+    )
+    loan_account.loan.update!(collateral_account: asset)
+    ndjson = nil
+    Zip::File.open_buffer(Family::DataExporter.new(source).generate_export) { |zip| ndjson = zip.read("all.ndjson") }
+    lines = ndjson.split("\n").select { |line| JSON.parse(line)["type"] == "Account" }
+    session = @family.import_sessions.create!(expected_chunks: lines.size)
+
+    lines.each { |line| Family::DataImporter.new(@family, line, import_session: session).import! }
+
+    restored = @family.accounts.find_by!(name: "Mortgage").loan
+    assert_equal "House", restored.reload.collateral_account.name
+  end
+
   test "leaves a loan unlinked when its collateral is not in the import" do
     ndjson = build_ndjson(collateral_records(collateral_ref: "some-account-we-never-exported"))
 

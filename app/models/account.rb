@@ -153,12 +153,12 @@ class Account < ApplicationRecord
   accepts_nested_attributes_for :accountable, update_only: true
 
   # `loan.account` is nil while a new loan validates (Rails cannot infer the
-  # inverse across a polymorphic association), so the loan's own check of its
-  # collateral link has nothing to compare the asset's family, currency and
-  # viewers against, and a forged id would sail through creation. A new account
-  # says who it is on the loan's behalf. An existing account is judged by the
-  # loan's own validation, which can see it, so it is not judged twice here.
-  validate :new_loan_collateral_is_eligible, if: -> { new_record? && loan? }
+  # inverse across a polymorphic association), and on an update it is the account
+  # as stored, not as submitted. Either way the loan's check of its collateral link
+  # would compare the asset against the wrong account. So the account hands itself
+  # to the loan before validating (a transient `owning_account`, not the
+  # association); the loan's own validation then judges the link once, correctly.
+  before_validation :hand_loan_its_account, if: -> { loan? && association(:accountable).loaded? }
 
   # Account state machine
   aasm column: :status, timestamps: true do
@@ -742,12 +742,11 @@ class Account < ApplicationRecord
 
   private
 
-    def new_loan_collateral_is_eligible
-      return unless family
-
-      accountable.collateral_problems(loan_account: self).each do |problem|
-        errors.add(:base, "Collateral account #{problem}")
-      end
+    # The loan's checks on its collateral need the account it is being saved
+    # through, as it will be saved: the currency the form submitted, and an account
+    # that does not exist yet. `loan.account` is neither (see Loan#owning_account).
+    def hand_loan_its_account
+      accountable.owning_account = self
     end
 
     def assign_default_owner
