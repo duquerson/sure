@@ -39,7 +39,7 @@ class EventsController < ApplicationController
   end
 
   def create
-    @event = Current.family.events.new(event_params)
+    @event = Current.family.events.build(event_params)
 
     if @event.save
       redirect_to event_path(@event), notice: t(".created")
