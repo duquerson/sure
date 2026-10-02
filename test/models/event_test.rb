@@ -474,6 +474,22 @@ class EventTest < ActiveSupport::TestCase
     end
   end
 
+  # Two simultaneous POSTs for one pair both pass the Ruby uniqueness check; the loser
+  # hits the unique index. It reads the winner's row and updates it instead of raising.
+  test "an override that loses a race for the unique index is retried, not raised" do
+    outside = Transaction.find(txn(7))
+    EventTransaction.any_instance.stubs(:update!).raises(ActiveRecord::RecordNotUnique.new("dup")).then.returns(true)
+
+    assert_nothing_raised { @event.include_transaction!(outside) }
+  end
+
+  test "a unique violation that persists is raised after one retry" do
+    outside = Transaction.find(txn(7))
+    EventTransaction.any_instance.expects(:update!).raises(ActiveRecord::RecordNotUnique.new("dup")).twice
+
+    assert_raises(ActiveRecord::RecordNotUnique) { @event.include_transaction!(outside) }
+  end
+
   test "family has many events" do
     assert_includes @family.events, @event
     assert_not_includes families(:dylan_family).events, @event

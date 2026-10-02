@@ -164,9 +164,19 @@ class Event < ApplicationRecord
       scope
     end
 
+    # Two simultaneous requests for one pair both see no row and both insert; the
+    # unique index stops the second. Retrying once finds the first request's row and
+    # updates it, so the loser of the race succeeds instead of returning a 500.
     def set_override!(transaction, inclusion)
-      override = event_transactions.find_or_initialize_by(transaction_id: transaction.id)
-      override.update!(inclusion: inclusion)
+      attempts = 0
+      begin
+        override = event_transactions.find_or_initialize_by(transaction_id: transaction.id)
+        override.update!(inclusion: inclusion)
+      rescue ActiveRecord::RecordNotUnique
+        attempts += 1
+        retry if attempts < 2
+        raise
+      end
     end
 
     def included_account_ids(user)
