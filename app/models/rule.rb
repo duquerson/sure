@@ -32,8 +32,10 @@ class Rule < ApplicationRecord
   # Order only means something if the rules run one at a time: rule actions do not
   # lock what they write, so the later rule overwrites the earlier one. A rule that
   # fails has already recorded a failed RuleRun, so the rest still run. A pattern
-  # that timed out is final (running it again would time out again); any other
-  # failure is raised once every rule has run, so the calling job can be retried.
+  # that timed out is final (running it again would time out again). Any other
+  # failure is retried for that rule alone, as its own job: retrying the whole pass
+  # would re-run every rule that succeeded, and with them any paid asynchronous
+  # action (AI categorisation, merchant detection) they had already enqueued.
   #
   # Actions that run asynchronously (AI categorisation, merchant detection) are
   # enqueued in order but finish on their own; they are not serialised here.
@@ -42,18 +44,14 @@ class Rule < ApplicationRecord
   # @param ignore_attribute_locks [Boolean]
   # @param execution_type [String] a RuleRun execution type
   def self.apply_in_priority_order(rules, ignore_attribute_locks:, execution_type:)
-    first_failure = nil
-
     rules.prioritised.each do |rule|
       RuleJob.perform_now(rule, ignore_attribute_locks: ignore_attribute_locks, execution_type: execution_type)
     rescue Rule::SafeRegex::TimeoutError => e
       Rails.logger.error("Rule #{rule.id} timed out during an ordered run: #{e.message}")
     rescue => e
-      Rails.logger.error("Rule #{rule.id} failed during an ordered run: #{e.class}: #{e.message}")
-      first_failure ||= e
+      Rails.logger.error("Rule #{rule.id} failed during an ordered run, retrying it alone: #{e.class}: #{e.message}")
+      RuleJob.perform_later(rule, ignore_attribute_locks: ignore_attribute_locks, execution_type: execution_type)
     end
-
-    raise first_failure if first_failure
   end
 
   # Swaps this rule with its neighbour in the family's order.
@@ -151,6 +149,10 @@ class Rule < ApplicationRecord
     total_async_jobs = 0
     has_async = false
 
+    # Every action reads the matches again, so the one expensive part (a regex scan
+    # under a statement timeout) is resolved once for the whole apply.
+    @regex_matches = {}
+
     actions.each do |action|
       result = action.apply(matching_resources_scope, ignore_attribute_locks: ignore_attribute_locks, rule_run: rule_run)
 
@@ -171,6 +173,8 @@ class Rule < ApplicationRecord
     else
       total_modified
     end
+  ensure
+    @regex_matches = nil
   end
 
   def apply_later(ignore_attribute_locks: false)
@@ -217,7 +221,7 @@ class Rule < ApplicationRecord
       # actions then run on those ids.
       return scope unless conditions.any?(&:uses_regex?)
 
-      ids = Rule::SafeRegex.with_timeout { scope.pluck(:id) }
+      ids = regex_matching_ids(scope)
       registry.resource_scope.where(id: ids)
     end
 
@@ -246,6 +250,14 @@ class Rule < ApplicationRecord
           end
         end
       end
+    end
+
+    # The ids a regex rule matches, resolved under a statement timeout. During #apply
+    # the result is kept, so a rule with several actions scans once.
+    def regex_matching_ids(scope)
+      return Rule::SafeRegex.with_timeout { scope.pluck(:id) } if @regex_matches.nil?
+
+      @regex_matches.fetch(:ids) { @regex_matches[:ids] = Rule::SafeRegex.with_timeout { scope.pluck(:id) } }
     end
 
     def assign_priority

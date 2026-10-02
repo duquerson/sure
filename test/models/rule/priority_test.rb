@@ -159,14 +159,31 @@ class Rule::PriorityTest < ActiveSupport::TestCase
     ApplyAllRulesJob.perform_now(@family, active_only: true, ignore_attribute_locks: false)
   end
 
-  test "a rule that fails does not stop the ones after it, and the job still fails so it can be retried" do
+  # A retry of the whole pass would re-run every successful rule, and with it any paid
+  # asynchronous action (AI categorisation, merchant detection) they enqueued. Only the
+  # rule that failed is retried.
+  test "a rule that fails does not stop the ones after it, and only that rule is retried" do
     first = rule_setting(@groceries, name: "first", active: true)
     second = rule_setting(@dining, name: "second", active: true)
-    RuleJob.stubs(:perform_now).with(first, anything).raises(ActiveRecord::StatementInvalid.new("transient"))
-    RuleJob.expects(:perform_now).with(second, anything).once
+    third = rule_setting(@groceries, name: "third", active: true)
+    RuleJob.stubs(:perform_now).with(second, anything).raises(ActiveRecord::StatementInvalid.new("transient"))
+    RuleJob.expects(:perform_now).with(first, anything).once
+    RuleJob.expects(:perform_now).with(third, anything).once
 
-    assert_raises(ActiveRecord::StatementInvalid) do
+    assert_nothing_raised do
       ApplyAllRulesJob.perform_now(@family, active_only: true, ignore_attribute_locks: false)
+    end
+
+    retried = enqueued_jobs.select { |job| job[:job] == RuleJob }
+    assert_equal [ second.id ], retried.map { |job| job[:args].first["_aj_globalid"].to_s.split("/").last }
+  end
+
+  test "a failed rule is retried with the same attribute-lock setting" do
+    rule = rule_setting(@groceries, active: true)
+    RuleJob.stubs(:perform_now).raises(ActiveRecord::StatementInvalid.new("transient"))
+
+    assert_enqueued_with(job: RuleJob, args: [ rule, { ignore_attribute_locks: false, execution_type: "scheduled" } ]) do
+      ApplyAllRulesJob.perform_now(@family, active_only: true, ignore_attribute_locks: false, execution_type: "scheduled")
     end
   end
 

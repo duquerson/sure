@@ -43,6 +43,38 @@ class Rule::RegexExecutionTest < ActiveSupport::TestCase
     assert_equal 1, rule.apply
   end
 
+  # Each action reads the matches again, so without a cache a broad pattern is scanned
+  # (and materialised) once per action, each time paying the timeout in the worst case.
+  test "a regex is resolved once per apply however many actions the rule has" do
+    rule = Rule.create!(
+      family: @family, resource_type: "transaction",
+      conditions: [ Rule::Condition.new(condition_type: "transaction_name", operator: "matches_regex", value: "amzn") ],
+      actions: [
+        Rule::Action.new(action_type: "set_transaction_category", value: @category.id),
+        Rule::Action.new(action_type: "exclude_transaction")
+      ]
+    )
+    calls = 0
+    Rule::SafeRegex.stubs(:with_timeout).with { |*| calls += 1; true }.yields.returns([ @hit.transaction.id ])
+
+    rule.apply
+
+    assert_equal 1, calls
+    assert_equal @category, @hit.reload.transaction.category
+    assert @hit.reload.excluded?, "the second action ran on the resolved match"
+  end
+
+  test "the cache lasts for one apply: a later apply resolves the pattern again" do
+    rule = regex_rule("amzn")
+    calls = 0
+    Rule::SafeRegex.stubs(:with_timeout).with { |*| calls += 1; true }.yields.returns([ @hit.transaction.id ])
+
+    rule.apply
+    rule.apply
+
+    assert_equal 2, calls
+  end
+
   test "a regex inside a compound condition is also bounded" do
     rule = Rule.new(family: @family, resource_type: "transaction",
                     actions: [ Rule::Action.new(action_type: "set_transaction_category", value: @category.id) ])
