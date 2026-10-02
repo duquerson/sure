@@ -1370,6 +1370,10 @@ class Family::DataImporter
       end
     end
 
+    def rules_priority_base
+      @rules_priority_base ||= @family.rules.maximum(:priority) || 0
+    end
+
     def import_rules(records)
       records.each do |record|
         data = record["data"]
@@ -1387,8 +1391,11 @@ class Family::DataImporter
           active: data["active"] || false,
           effective_date: data["effective_date"].present? ? Date.parse(data["effective_date"].to_s) : nil
         )
-        # Older exports carry no priority; such a rule is appended to the run order.
-        rule.priority = data["priority"].to_i if data["priority"].to_i.positive?
+        # An export's priorities only mean "relative to each other", so a new rule takes
+        # its exported number on top of the family's highest one, which keeps the
+        # exported order and puts it after the rules already there. A rule without one
+        # (an older export) is appended by the model, and an existing rule keeps its own.
+        rule.priority = rules_priority_base + data["priority"].to_i if created && data["priority"].to_i.positive?
 
         rule.conditions.destroy_all unless created
         rule.actions.destroy_all unless created

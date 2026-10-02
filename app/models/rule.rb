@@ -12,7 +12,7 @@ class Rule < ApplicationRecord
   accepts_nested_attributes_for :actions, allow_destroy: true
 
   before_validation :normalize_name
-  before_validation :assign_priority, on: :create
+  before_create :assign_priority
 
   # The order every runner applies rules in. Priority alone is not unique (rules
   # imported or edited by hand can share one), so created_at and id make it a
@@ -260,10 +260,14 @@ class Rule < ApplicationRecord
       @regex_matches.fetch(:ids) { @regex_matches[:ids] = Rule::SafeRegex.with_timeout { scope.pluck(:id) } }
     end
 
+    # Runs inside the save's transaction and takes the family row first, so two rules
+    # created at once for one family read the maximum one after the other and cannot
+    # end up with the same priority.
     def assign_priority
-      return if priority.to_i.positive? || family.nil?
+      return if priority.to_i.positive?
 
-      self.priority = (family.rules.maximum(:priority) || 0) + 1
+      Family.lock.find(family_id)
+      self.priority = (Rule.where(family_id: family_id).maximum(:priority) || 0) + 1
     end
 
     def normalize_name

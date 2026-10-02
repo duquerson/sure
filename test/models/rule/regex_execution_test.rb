@@ -75,6 +75,24 @@ class Rule::RegexExecutionTest < ActiveSupport::TestCase
     assert_equal 2, calls
   end
 
+  # No stub on the timeout itself: a scope that really sleeps in Postgres is cancelled by
+  # the statement timeout, and the error comes out of Rule#apply as TimeoutError.
+  test "a regex rule whose match query outlives the limit is cancelled by Postgres and raises from apply" do
+    rule = regex_rule("amzn")
+    slow = rule.registry.resource_scope.where("(SELECT pg_sleep(1)) IS NOT NULL")
+    Rule::Condition.any_instance.stubs(:apply).returns(slow)
+    original = Rule::SafeRegex::EXECUTION_TIMEOUT_MS
+    Rule::SafeRegex.send(:remove_const, :EXECUTION_TIMEOUT_MS)
+    Rule::SafeRegex.const_set(:EXECUTION_TIMEOUT_MS, 30)
+
+    started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+    assert_raises(Rule::SafeRegex::TimeoutError) { rule.apply }
+    assert_operator Process.clock_gettime(Process::CLOCK_MONOTONIC) - started, :<, 0.9, "the query ran to completion instead of being cancelled"
+  ensure
+    Rule::SafeRegex.send(:remove_const, :EXECUTION_TIMEOUT_MS)
+    Rule::SafeRegex.const_set(:EXECUTION_TIMEOUT_MS, original)
+  end
+
   test "a regex inside a compound condition is also bounded" do
     rule = Rule.new(family: @family, resource_type: "transaction",
                     actions: [ Rule::Action.new(action_type: "set_transaction_category", value: @category.id) ])

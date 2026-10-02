@@ -46,6 +46,24 @@ class Rule::PriorityTest < ActiveSupport::TestCase
     assert_equal expected, @family.rules.prioritised.to_a
   end
 
+  test "creating a rule locks the family row so concurrent creates cannot share a priority" do
+    statements = []
+    subscriber = ActiveSupport::Notifications.subscribe("sql.active_record") { |*, payload| statements << payload[:sql] }
+
+    rule_setting(@groceries)
+
+    assert statements.any? { |sql| sql.match?(/FROM "families".*FOR UPDATE/m) }, "the create did not lock the family row"
+  ensure
+    ActiveSupport::Notifications.unsubscribe(subscriber)
+  end
+
+  test "move locks the family so two moves cannot interleave" do
+    rule = rule_setting(@groceries)
+    Family.any_instance.expects(:lock!).at_least_once
+
+    rule.move(:down)
+  end
+
   test "move up and down swap a rule with its neighbour" do
     a = rule_setting(@groceries, name: "a")
     b = rule_setting(@dining, name: "b")
@@ -217,6 +235,24 @@ class Rule::PriorityTest < ActiveSupport::TestCase
 
     assert held_during, "another session could take the family's lock while the pass was running"
     assert try_lock.call, "the lock was still held after the pass finished"
+  ensure
+    other_session&.close
+  end
+
+  test "a pass that finds another running for the family waits its turn instead of blocking a worker" do
+    rule = rule_setting(@groceries, active: true)
+    config = ActiveRecord::Base.connection_db_config.configuration_hash
+    other_session = PG.connect(
+      host: config[:host], port: config[:port], dbname: config[:database],
+      user: config[:username], password: config[:password]
+    )
+    other_session.exec_params("SELECT pg_advisory_lock($1)", [ ApplyAllRulesJob.lock_key(@family) ])
+    RuleJob.expects(:perform_now).never
+
+    assert_enqueued_with(job: ApplyAllRulesJob, args: [ @family, { execution_type: "manual", active_only: true, ignore_attribute_locks: false } ]) do
+      ApplyAllRulesJob.perform_now(@family, active_only: true, ignore_attribute_locks: false)
+    end
+    assert enqueued_jobs.last[:at].present?, "the waiting pass was not scheduled for later"
   ensure
     other_session&.close
   end

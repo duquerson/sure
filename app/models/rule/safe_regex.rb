@@ -17,7 +17,7 @@
 # a request open.
 class Rule::SafeRegex
   MAX_LENGTH = 200
-  PROBE_TIMEOUT_MS = 250
+  PROBE_TIMEOUT_MS = 1_000
   EXECUTION_TIMEOUT_MS = 5_000
 
   TimeoutError = Class.new(StandardError)
