@@ -17,6 +17,17 @@ class UI::NetWorthPaceTest < ViewComponent::TestCase
     assert_selector "[data-net-worth-pace] dd", text: "−$120.00 / month"
   end
 
+  test "labels are translated" do
+    stub_pace(velocity: 1_234.5, momentum: -120)
+
+    I18n.with_locale(:de) { render_inline component }
+
+    assert_selector "[data-net-worth-pace] dt", text: "Tempo"
+    assert_selector "[data-net-worth-pace] dt", text: "Dynamik"
+    assert_selector "dd", text: "/ Monat", count: 2
+    assert_no_selector "dt", text: "Velocity"
+  end
+
   test "a rising pace shows a plus on momentum, a falling one a minus on velocity" do
     stub_pace(velocity: -50, momentum: 75)
 
