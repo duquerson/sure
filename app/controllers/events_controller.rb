@@ -16,8 +16,9 @@ class EventsController < ApplicationController
 
   def show
     user = Current.user
-    @true_cost = @event.true_cost(user: user)
-    @category_breakdown = @event.category_breakdown(user: user)
+    rows = @event.totals_rows(user: user)
+    @true_cost = @event.true_cost(user: user, rows: rows)
+    @category_breakdown = @event.category_breakdown(user: user, rows: rows)
     @cumulative_series = @event.cumulative_series(user: user)
 
     transactions = @event.transactions(user: user)
@@ -87,7 +88,7 @@ class EventsController < ApplicationController
 
   private
     def set_event
-      @event = Current.family.events.find(params[:id])
+      @event = Current.family.events.find_by!(id: params[:id])
     end
 
     # Only a transaction the viewer can see in their own finances may be
@@ -96,7 +97,7 @@ class EventsController < ApplicationController
     def set_transaction
       @transaction = Current.family.transactions
         .where(entries: { account_id: Current.user.finance_accounts.select(:id) })
-        .find(params[:transaction_id])
+        .find_by!(id: params[:transaction_id])
     end
 
     def removed_transactions(user)

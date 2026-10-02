@@ -323,17 +323,6 @@ class EventTest < ActiveSupport::TestCase
     assert_includes @event.transactions.pluck(:id), outside.id
   end
 
-  test "excluding a transaction that was included flips the override rather than adding one" do
-    outside = Transaction.find(txn(6))
-    @event.include_transaction!(outside)
-
-    assert_no_difference "@event.event_transactions.count" do
-      @event.exclude_transaction!(outside)
-    end
-    assert_equal "excluded", @event.event_transactions.find_by!(transaction_id: outside.id).inclusion
-    assert_not_includes @event.transactions.pluck(:id), outside.id
-  end
-
   test "resetting a transaction removes its override and restores the date rule" do
     inside = Transaction.find(txn(2))
     @event.exclude_transaction!(inside)
@@ -472,6 +461,46 @@ class EventTest < ActiveSupport::TestCase
     assert_difference [ "Event.count", "EventTransaction.count" ], -1 do
       doomed.destroy!
     end
+  end
+
+  # An override exists only where it changes what the date rule would say; otherwise a
+  # later change to the event's dates would find a row that no longer means anything.
+  test "including a transaction the dates already hold writes no override" do
+    inside = Transaction.find(txn(2))
+
+    assert_no_difference "EventTransaction.count" do
+      @event.include_transaction!(inside)
+    end
+    assert_includes @event.transactions.pluck(:id), inside.id
+  end
+
+  test "including a transaction that was removed by hand drops the removal" do
+    inside = Transaction.find(txn(2))
+    @event.exclude_transaction!(inside)
+
+    assert_difference "EventTransaction.count", -1 do
+      @event.include_transaction!(inside)
+    end
+    assert_includes @event.transactions.pluck(:id), inside.id
+  end
+
+  test "excluding a transaction the dates already leave out writes no override" do
+    outside = Transaction.find(txn(8))
+
+    assert_no_difference "EventTransaction.count" do
+      @event.exclude_transaction!(outside)
+    end
+    assert_not_includes @event.transactions.pluck(:id), outside.id
+  end
+
+  test "excluding a transaction that was added by hand drops the addition" do
+    outside = Transaction.find(txn(8))
+    @event.include_transaction!(outside)
+
+    assert_difference "EventTransaction.count", -1 do
+      @event.exclude_transaction!(outside)
+    end
+    assert_not_includes @event.transactions.pluck(:id), outside.id
   end
 
   # Two simultaneous POSTs for one pair both pass the Ruby uniqueness check; the loser

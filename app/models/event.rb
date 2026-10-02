@@ -54,13 +54,19 @@ class Event < ApplicationRecord
     reportable_transactions(user).exists?(id: transaction.id)
   end
 
-  # Pull a transaction in by hand (it may be dated outside the range).
+  # Pull a transaction in by hand (it may be dated outside the range). A transaction
+  # the dates already hold needs no override; any removal of it is dropped instead.
   def include_transaction!(transaction)
+    return reset_transaction!(transaction) if in_range?(transaction)
+
     set_override!(transaction, "included")
   end
 
-  # Take a transaction out by hand (it may be dated inside the range).
+  # Take a transaction out by hand (it may be dated inside the range). A transaction
+  # the dates already leave out needs no override; any addition of it is dropped.
   def exclude_transaction!(transaction)
+    return reset_transaction!(transaction) unless in_range?(transaction)
+
     set_override!(transaction, "excluded")
   end
 
@@ -81,10 +87,23 @@ class Event < ApplicationRecord
       .or(base.where(entries: { date: (end_date + 1)..(end_date + within) }))
   end
 
+  # The income-statement rows the cost and the breakdown are read from. A caller that
+  # needs both (the show page) reads them once and passes them to each.
+  def totals_rows(user: nil)
+    IncomeStatement::Totals.new(
+      family,
+      transactions_scope: transactions(user: user),
+      date_range: date_range,
+      included_account_ids: included_account_ids(user)
+    ).call
+  end
+
   # Expenses minus refunds over the event's transactions, in family currency.
   # Negative when refunds exceed spending.
-  def true_cost(user: nil)
-    rows = totals_rows(user)
+  #
+  # @param rows [Array, nil] #totals_rows, when the caller already has them
+  def true_cost(user: nil, rows: nil)
+    rows ||= totals_rows(user: user)
     expense = rows.select { |row| row.classification == "expense" }.sum { |row| row.total.to_d }
     income = rows.select { |row| row.classification == "income" }.sum { |row| row.total.to_d }
 
@@ -94,9 +113,11 @@ class Event < ApplicationRecord
   # Net spend per category (a subcategory rolls up into its parent), largest
   # first. A category whose refunds exceed its spend is left out, so the rows
   # sum to the spend, not necessarily to #true_cost.
-  def category_breakdown(user: nil)
+  #
+  # @param rows [Array, nil] #totals_rows, when the caller already has them
+  def category_breakdown(user: nil, rows: nil)
     net = Hash.new(BigDecimal("0"))
-    totals_rows(user).each do |row|
+    (rows || totals_rows(user: user)).each do |row|
       key = row.parent_category_id || row.category_id
       amount = row.total.to_d
       net[key] += row.classification == "expense" ? amount : -amount
@@ -164,6 +185,10 @@ class Event < ApplicationRecord
       scope
     end
 
+    def in_range?(transaction)
+      date_range.cover?(transaction.entry.date)
+    end
+
     # Two simultaneous requests for one pair both see no row and both insert; the
     # unique index stops the second. Retrying once finds the first request's row and
     # updates it, so the loser of the race succeeds instead of returning a 500.
@@ -181,15 +206,6 @@ class Event < ApplicationRecord
 
     def included_account_ids(user)
       user&.finance_accounts&.pluck(:id)
-    end
-
-    def totals_rows(user)
-      IncomeStatement::Totals.new(
-        family,
-        transactions_scope: transactions(user: user),
-        date_range: date_range,
-        included_account_ids: included_account_ids(user)
-      ).call
     end
 
     def end_date_not_before_start_date

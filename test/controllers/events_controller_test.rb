@@ -296,6 +296,17 @@ class EventsControllerTest < ActionDispatch::IntegrationTest
     assert_redirected_to events_path
   end
 
+  # The page needs the totals for the cost card and the category breakdown; it reads
+  # them once, not once per figure.
+  test "show runs the event's totals query once" do
+    txn(1)
+    IncomeStatement::Totals.expects(:new).once.returns(stub(call: []))
+
+    get event_url(@event)
+
+    assert_response :success
+  end
+
   # Overrides ------------------------------------------------------------
 
   test "include pulls in a transaction dated outside the range" do
