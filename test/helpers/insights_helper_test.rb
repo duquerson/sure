@@ -181,6 +181,7 @@ class InsightsHelperTest < ActionView::TestCase
   test "stale valuation action opens the valuation form for that account in the modal" do
     account = accounts(:property)
     insight = build_insight("stale_valuation", metadata: { "account_id" => account.id })
+    Current.stubs(:user).returns(users(:family_admin))
 
     action = insight_action(insight)
 
@@ -245,13 +246,18 @@ class InsightsHelperTest < ActionView::TestCase
     assert_equal new_valuation_path(account_id: account.id), insight_action(insight)[:href], "the owner"
   end
 
-  test "stale valuation action still renders where there is no current user, as in a broadcast" do
+  # A broadcast render is one render for the whole family, so it cannot tell a
+  # writer from a read-only member. It must not offer the link to either: the
+  # difference from the writer case above is the only thing this test measures.
+  test "stale valuation action is withheld where there is no current user, as in a broadcast" do
     account = accounts(:property)
     insight = build_insight("stale_valuation", metadata: { "account_id" => account.id })
 
-    Current.stubs(:user).returns(nil)
+    Current.stubs(:user).returns(users(:family_admin))
+    assert insight_action(insight), "precondition: a writer is offered the action"
 
-    assert_equal new_valuation_path(account_id: account.id), insight_action(insight)[:href]
+    Current.stubs(:user).returns(nil)
+    assert_nil insight_action(insight)
   end
 
   test "maintained reserve metadata and action render in German" do

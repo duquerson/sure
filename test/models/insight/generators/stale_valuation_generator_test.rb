@@ -124,6 +124,19 @@ class Insight::Generators::StaleValuationGeneratorTest < ActiveSupport::TestCase
                  generate.map { |i| i.metadata[:account_id] }
   end
 
+  test "a fourth stale account is reported once one of the three is valued" do
+    value_on(@property, 100.days.ago.to_date)
+    value_on(accounts(:vehicle), 400.days.ago.to_date)
+    value_on(accounts(:other_asset), 300.days.ago.to_date)
+    value_on(accounts(:other_liability), 200.days.ago.to_date)
+    assert_not_includes generate.map { |i| i.metadata[:account_id] }, @property.id, "precondition: the newest is cut"
+
+    add_valuation(accounts(:vehicle), Date.current)
+
+    assert_equal [ accounts(:other_asset), accounts(:other_liability), @property ].map(&:id),
+                 generate.map { |i| i.metadata[:account_id] }
+  end
+
   test "the dedup key carries the account and the month" do
     value_on(@property, 91.days.ago.to_date)
 

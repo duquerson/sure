@@ -127,9 +127,11 @@ module InsightsHelper
     when "stale_valuation"
       account = insight.family.accounts.visible.find_by(id: metadata["account_id"])
       # Offered only to someone the valuation form would accept: it is a write.
-      # Broadcast renders have no Current.user, so there the account's presence is
-      # all that can be checked.
-      account = nil if account && Current.user && !AccountAuthorizable::PERMISSION_LEVELS[:write].include?(account.permission_for(Current.user))
+      # A broadcast render has no Current.user, so it cannot tell a writer from a
+      # read-only member and fails closed: no action until the next full page load
+      # renders the card for a real viewer. Showing it would offer a link that
+      # ends in "not authorised" to every read-only member.
+      account = nil if account && !(Current.user && AccountAuthorizable::PERMISSION_LEVELS[:write].include?(account.permission_for(Current.user)))
       # The valuation form is a modal, so the card's link has to target the
       # modal frame; every other action navigates the page.
       account && { text: t("insights.actions.stale_valuation"), href: new_valuation_path(account_id: account.id), frame: :modal }
