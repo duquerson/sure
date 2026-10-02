@@ -164,7 +164,8 @@ class Portfolio::SectionRegistry
           key: "income",
           title: "portfolios.sections.income",
           partial: "portfolios/income",
-          locals: shared_locals.merge(income: income, trailing: trailing_income, bars: income_bars),
+          locals: shared_locals.merge(income: income, trailing: trailing_income, bars: income_bars,
+                                      rate_missing: income_rate_missing?),
           visible: true,
           collapsible: true
         },
@@ -590,9 +591,27 @@ class Portfolio::SectionRegistry
     # the day after the same date a year earlier, so the window is a full year
     # and not a year and a day.
     def trailing_income
-      @trailing_income ||= statement.performance(
+      @trailing_income ||= trailing_performance.income
+    end
+
+    def trailing_performance
+      @trailing_performance ||= statement.performance(
         period: Period.custom(start_date: as_of.prev_year + 1.day, end_date: as_of)
-      ).income
+      )
+    end
+
+    # Whether a currency with no rate left something out of the income figures,
+    # in either window, since the section prints both.
+    #
+    # The totals, fees and bars are MONEY and are reported whatever happens, as
+    # Portfolio::Drivers' are; only the ratios are withheld (R13). But an entry
+    # in a currency with no rate falls out of their SQL sum, so they are partial
+    # without saying so. The section says so where the figures are, the way
+    # Realised P&L names the disposals it left out, rather than leaving a total
+    # that reads as complete. Both predicates are already computed for the
+    # sections above, so this costs no query.
+    def income_rate_missing?
+      performance.rate_missing? || trailing_performance.rate_missing?
     end
 
     # The bar payload, in the shape and for the reasons realized_gains_bars

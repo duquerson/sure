@@ -121,6 +121,8 @@ de:
       fees: Gebühren im Zeitraum (%{period})
       no_income: Im ausgewählten Zeitraum (%{period}) wurden keine Dividenden oder Zinsen gezahlt.
       period_total: Dividenden und Zinsen im Zeitraum (%{period})
+      rate_missing_body: Mindestens eine Dividende, Zinszahlung oder Gebühr liegt in einer Währung ohne Wechselkurs nach %{currency} und ist in den folgenden Werten nicht enthalten. Sie können zu niedrig ausfallen.
+      rate_missing_title: Einige Erträge konnten nicht umgerechnet werden
       reversals: Rückbuchungen
       trailing_total: Letzte 12 Monate
     index_chart:

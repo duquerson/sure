@@ -504,6 +504,49 @@ class PortfoliosControllerTest < ActionDispatch::IntegrationTest
     assert_select "#portfolio-income p", text: /#{Regexp.escape(I18n.t("portfolios.income.trailing_total"))}/
   end
 
+  # R13: the totals are reported whatever happens, so the section has to say
+  # when something was left out of them. It says so where the figures are -- in
+  # both branches, since an income section that reads "nothing was paid" because
+  # every payout was unconvertible would be the worst place to stay quiet.
+  test "the income section warns that a missing exchange rate leaves income out" do
+    Portfolio::Performance.any_instance.stubs(:rate_missing?).returns(true)
+    Portfolio::Performance.any_instance.stubs(:income).returns(
+      buckets: [ { month: Date.new(2026, 3, 1), amount: BigDecimal("42.5") } ],
+      total: BigDecimal("42.5"), fees: BigDecimal(0), average_value: BigDecimal("2000"), fee_ratio: nil
+    )
+
+    get portfolio_path
+
+    assert_response :success
+    assert_select "#portfolio-income", text: /#{Regexp.escape(I18n.t("portfolios.income.rate_missing_title"))}/
+  end
+
+  test "the income section warns about a missing exchange rate even when it shows no income" do
+    Portfolio::Performance.any_instance.stubs(:rate_missing?).returns(true)
+    Portfolio::Performance.any_instance.stubs(:income).returns(
+      buckets: [], total: BigDecimal(0), fees: BigDecimal(0), average_value: BigDecimal("2000"), fee_ratio: nil
+    )
+
+    get portfolio_path
+
+    assert_response :success
+    assert_select "#portfolio-income", text: /#{Regexp.escape(I18n.t("portfolios.income.rate_missing_title"))}/
+    assert_select "#portfolio-income", text: /#{Regexp.escape(I18n.t("portfolios.income.no_income", period: Period.last_30_days.label))}/
+  end
+
+  test "the income section carries no exchange rate warning when no rate is missing" do
+    Portfolio::Performance.any_instance.stubs(:rate_missing?).returns(false)
+    Portfolio::Performance.any_instance.stubs(:income).returns(
+      buckets: [ { month: Date.new(2026, 3, 1), amount: BigDecimal("42.5") } ],
+      total: BigDecimal("42.5"), fees: BigDecimal(0), average_value: BigDecimal("2000"), fee_ratio: nil
+    )
+
+    get portfolio_path
+
+    assert_response :success
+    assert_select "#portfolio-income", text: /#{Regexp.escape(I18n.t("portfolios.income.rate_missing_title"))}/, count: 0
+  end
+
   test "the income section says so when nothing was paid, and omits the fee line" do
     Portfolio::Performance.any_instance.stubs(:income).returns(
       buckets: [], total: BigDecimal(0), fees: BigDecimal(0),
@@ -717,8 +760,9 @@ class PortfoliosControllerTest < ActionDispatch::IntegrationTest
     assert_select "[data-portfolio-issue-kind='missing_cost_basis']", text: /#{I18n.t("portfolios.data_quality.read_only")}/
   end
 
-  # Measured 95, ceiling 101 -- the same 6 of headroom every previous pair
-  # carried. The figure has moved three times:
+  # Measured 99, ceiling 101. The comment here said 95 until the income section
+  # (#123), but `main` already measured 97 when that landed: the 95 -> 97 drift
+  # is not attributed to any change below. The figure has moved four times:
   #
   #   54 -> 61  the performance section: one Portfolio::Performance for the
   #             request, memoised on the registry, which is its only caller
@@ -728,6 +772,8 @@ class PortfoliosControllerTest < ActionDispatch::IntegrationTest
   #             DISTINCT ON balances read, and one IncomeStatement median with
   #             the account-id lookups it always makes. Per request, not per
   #             account or holding
+  #   97 -> 99  the income section (#123, 4.1a): the trailing twelve months'
+  #             Portfolio::Performance, a second window beside the period's
   #
   # Neither rise is per holding, and the comparison's is bounded rather than
   # merely small: the two tests above prove both, and those assertions -- not

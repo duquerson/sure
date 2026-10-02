@@ -61,6 +61,14 @@ class Portfolio::Income
   # days the fee was charged. Taken over today's value (or the closing one) a
   # fee ratio shrinks every time the portfolio grows, which is the wrong way
   # round for a cost figure.
+  #
+  # LIMITATION: `rows` has one row per calendar day of the period, and a day
+  # before the portfolio's first balance row has a value of zero. A period that
+  # opens before the portfolio existed therefore averages those zeros in, which
+  # lowers the denominator and inflates #fee_ratio. It is a mean over the period
+  # as asked for, not over the days the portfolio was invested, and it is left
+  # that way because the second reading would change what the figure means
+  # (and what the period label above it says it covers).
   def average_value
     return BigDecimal(0) if rows.empty?
 

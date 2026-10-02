@@ -121,6 +121,8 @@ en:
       fees: Fees in %{period}
       no_income: No dividends or interest were paid in %{period}.
       period_total: Dividends and interest in %{period}
+      rate_missing_body: At least one dividend, interest payment or fee is in a currency with no exchange rate to %{currency}, so it is left out of the figures below. They may be understated.
+      rate_missing_title: Some income could not be converted
       reversals: Reversals
       trailing_total: Last 12 months
     index_chart:
