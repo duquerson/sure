@@ -615,6 +615,13 @@ class Portfolio::SectionRegistry
     # row answers "what did it pay in the period you picked" and a yield over
     # that would move with the picker; a yield is a yearly figure.
     #
+    # LIMITATION, by the issue's own definition ("trailing income / cost basis"):
+    # this divides a year of income by TODAY's cost basis. A position that was
+    # partly sold during the year overstates the yield (income from shares no
+    # longer in the denominator), and one bought recently understates it (a year
+    # of denominator, a few months of income). It is a yield on what is held now,
+    # not a time-weighted figure.
+    #
     # nil, never zero, when it cannot be stated honestly:
     # - the security is not held, so there is no cost basis to divide by;
     # - a position's cost basis is unknown (`missing_cost_basis`), because the

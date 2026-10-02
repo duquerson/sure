@@ -35,10 +35,14 @@ class Portfolio::Performance
   # was added, so a v3 entry would serve the old meaning under the new name.
   #
   # v6: `income` was added to the metrics (the monthly income series and the fee
-  # ratio). It has since moved to an entry of its own (see #income), so a v6
-  # metrics entry carries a key nothing reads; the bump stands because a v5
-  # entry was written before either existed.
-  CACHE_VERSION = "v6".freeze
+  # ratio).
+  #
+  # v7: `income` moved out of the metrics into an entry of its own (see #income),
+  # so a metrics entry written from here on has no `income` key. A rollback to
+  # the version that read `metrics[:income]` would otherwise find v6 entries
+  # written by this one, get nil for it, and fail to render the income section
+  # until the next sync moved the key.
+  CACHE_VERSION = "v7".freeze
 
   # R5: the balance rows are calendar daily, so the series includes weekends and
   # holidays as structural zeros. Annualising that by the trading-day convention

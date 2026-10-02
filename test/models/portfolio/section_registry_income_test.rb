@@ -203,16 +203,26 @@ class Portfolio::SectionRegistryIncomeTest < ActiveSupport::TestCase
   end
 
   # Every other ratio on this page is withheld when a rate is missing (R13).
+  #
+  # Built from a real rateless fixture, not a stub of `rate_missing?`: a EUR
+  # dividend with no EUR rate cannot be converted, which is what raises the flag,
+  # and the USD security beside it still has a perfectly good yield to withhold.
   test "yield on cost is withheld when a rate is missing" do
     aapl = securities(:aapl)
     income_trade account: @account, date: @as_of - 10, amount: 5, security: aapl
     lay_history
     holding_snapshot account: @account, date: @as_of, qty: 10, price: 50, cost_basis: 40, security: aapl
-    assert_not_nil income_locals[:yields][aapl.id.to_s], "the control: with rates, there is a yield"
+    assert_not_nil income_locals[:yields][aapl.id.to_s], "the control: with every rate present, there is a yield"
 
-    Portfolio::Performance.any_instance.stubs(:rate_missing?).returns(true)
+    eur = create_portfolio_account(family: @family, currency: "EUR")
+    income_trade account: eur, date: @as_of - 9, amount: 3, security: securities(:msft)
 
-    assert_nil income_locals[:yields][aapl.id.to_s]
+    locals = income_locals
+
+    assert Portfolio::Performance.new(
+      family: @family, account_ids: [ @account.id, eur.id ], period: @period
+    ).rate_missing?, "the fixture really does have a missing rate"
+    assert_nil locals[:yields][aapl.id.to_s], "the USD security's yield is withheld too"
   end
 
   # The point of the unattributed bucket, at the level a user sees it.

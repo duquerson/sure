@@ -102,6 +102,25 @@ class Portfolio::IncomeBySecurityTest < ActiveSupport::TestCase
     assert_equal BigDecimal(0), by_security.unattributed
   end
 
+  # A reversal with no security recorded makes the unattributed remainder
+  # NEGATIVE. That is arithmetically what happened -- income was clawed back and
+  # nothing says from which security -- and it keeps the table adding up to the
+  # total, so it is shown as it is rather than clamped to zero or hidden. Pinned
+  # so that it stays a decision and does not become an accident of subtraction.
+  test "a reversal with no security makes the unattributed remainder negative, and the table still adds up" do
+    income_trade account: @account, date: @mar, amount: 30, security: @aapl
+    income_transaction account: @account, date: @mar + 1, amount: -8
+    lay_flat_balances cash_by_date: { @mar => 30, @mar + 1 => -8 }
+
+    by_security = income_by_security
+
+    assert_equal BigDecimal(30), by_security.amount_for(@aapl.id)
+    assert_equal BigDecimal(-8), by_security.unattributed
+    assert_equal BigDecimal(22), by_security.total
+    assert_equal by_security.total, by_security.rows.sum(BigDecimal(0), &:amount) + by_security.unattributed
+    assert by_security.any?
+  end
+
   test "rows are largest first, and ties are broken by ticker" do
     income_trade account: @account, date: @mar, amount: 5, security: @msft
     income_trade account: @account, date: @mar + 1, amount: 5, security: @aapl
