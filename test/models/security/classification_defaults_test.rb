@@ -108,6 +108,42 @@ class Security::ClassificationDefaultsTest < ActiveSupport::TestCase
     assert_equal "asia_pacific", security.region, "the country lookup overwrote a region already set"
   end
 
+  # `development_status` is derived live from `country_code` and `region` is
+  # stored, so a country correction used to move one and not the other: the
+  # same security claiming Japan and north_america at once. The region the
+  # lookup wrote is the lookup's to move.
+  test "correcting the country moves a region the country lookup wrote" do
+    security = Security.create!(ticker: "REG-FIX", country_code: "US")
+    assert_equal [ "north_america", "developed" ], [ security.region, security.development_status ]
+
+    security.update!(country_code: "JP")
+
+    assert_equal "asia_pacific", security.reload.region
+    assert_equal "asia_pacific", Security::REGIONS.dig("JP", "region"), "the two halves must agree on the same country"
+    assert_equal security.development_status, Security::REGIONS.dig("JP", "development")
+  end
+
+  # The counterpart: a region that disagrees with the country was set by
+  # someone who knew something the listing does not say, and a later country
+  # correction must not overwrite it.
+  test "correcting the country leaves a region someone else set" do
+    security = Security.create!(ticker: "REG-ADR", country_code: "US", region: "asia_pacific")
+
+    security.update!(country_code: "GB")
+
+    assert_equal "asia_pacific", security.reload.region, "a deliberately set region was overwritten"
+  end
+
+  # A country the config does not name leaves the region unanswered rather
+  # than standing on the superseded one.
+  test "correcting the country to an unknown one clears a region the lookup wrote" do
+    security = Security.create!(ticker: "REG-UNK", country_code: "US")
+
+    security.update!(country_code: "ZZ")
+
+    assert_nil security.reload.region
+  end
+
   # An offline security's country_code is a search hint about the PERSON, not a
   # fact about the instrument: `Security::Resolver#offline_security` persists
   # whatever the caller passed, and the resolver's own ranking calls that value
@@ -229,8 +265,10 @@ class Security::ClassificationDefaultsTest < ActiveSupport::TestCase
   # `region` has no database constraint, so the model validation is the only
   # thing standing between REGION_KEYS and an allocation chart with a sixth
   # slice in it.
+  # No country, so the callback has nothing to refill: the nil branch is then
+  # what validation actually sees.
   test "a region outside the vocabulary is refused" do
-    security = securities(:aapl)
+    security = Security.create!(ticker: "NOWHERE", exchange_operating_mic: "XNAS")
 
     security.region = "atlantis"
     assert_not security.valid?
@@ -238,6 +276,33 @@ class Security::ClassificationDefaultsTest < ActiveSupport::TestCase
 
     security.region = nil
     assert security.valid?, "nil is the honest answer for a country the config does not name"
+    assert_nil security.region
+  end
+
+  test "a lowercase country code still derives its region" do
+    assert_equal "north_america", Security.create!(ticker: "LOWER", exchange_operating_mic: "XNAS", country_code: "us").region
+  end
+
+  # A caller who corrects the country and states the region in the same save
+  # has said what the region is; the old-country agreement test must not undo it.
+  test "a region set in the same save as a country correction is kept" do
+    security = Security.create!(ticker: "XLIST", exchange_operating_mic: "XNAS", country_code: "US")
+    security.update_columns(region: "europe")
+
+    security.update!(country_code: "JP", region: "north_america")
+
+    assert_equal "north_america", security.reload.region
+  end
+
+  # How an existing security picks the defaults up: on its next write, with no
+  # backfill job.
+  test "an unclassified cash security is classified on an unrelated save" do
+    cash = Security.create!(ticker: "CASHUSD", kind: "cash")
+    cash.update_columns(asset_class: nil, asset_sub_class: nil, classification_source: nil)
+
+    cash.update!(name: "Cash (USD)")
+
+    assert_equal [ "liquidity", "cash" ], [ cash.reload.asset_class, cash.asset_sub_class ]
   end
 
   # A security carrying one half of a classification and not the other is not
@@ -250,6 +315,44 @@ class Security::ClassificationDefaultsTest < ActiveSupport::TestCase
     assert_equal "cash", security.asset_sub_class, "the missing sub-class was left empty"
     assert_equal "liquidity", security.asset_class, "the half that was set moved"
     assert_equal "manual", security.classification_source
+  end
+
+  # Filling the missing half is only right when it agrees with the half that is
+  # there. A cash security some other writer called `equity` would otherwise
+  # become `equity`/`cash` -- a pair nobody asserted -- and be marked
+  # `default` into the bargain. The weakest writer leaves a disagreement for a
+  # stronger one to settle.
+  test "a default does not complete a pair it would contradict" do
+    security = Security.create!(ticker: "CASH-CONTRA", kind: "cash", offline: true, asset_class: "equity")
+
+    assert_equal "equity", security.asset_class
+    assert_nil security.asset_sub_class, "the default invented an equity/cash pair"
+    assert_nil security.classification_source, "the default claimed a classification it did not make"
+
+    security = Security.create!(ticker: "CASH-CONTRA-SUB", kind: "cash", offline: true, asset_sub_class: "stock")
+
+    assert_nil security.asset_class, "the default invented a liquidity/stock pair"
+    assert_equal "stock", security.asset_sub_class
+    assert_nil security.classification_source
+  end
+
+  # The callback runs on every save, including the health check's routine
+  # `update!(last_health_check_at:)`. Once a row is classified, running it
+  # again must leave nothing dirty, or every such save would write columns it
+  # has no news about.
+  test "validating an already-classified security leaves it unchanged" do
+    cash = Security.create!(ticker: "CASH-NOCHURN", kind: "cash", offline: true).reload
+    listed = Security.create!(ticker: "REG-NOCHURN", country_code: "US").reload
+    # Written past the callback, so the row really holds a provider's answer
+    # rather than whatever the callback made of it on create.
+    provided = Security.create!(ticker: "CASH-NOCHURN-PROV", kind: "cash", offline: true)
+    provided.update_columns(asset_class: "liquidity", asset_sub_class: "cash", classification_source: "provider")
+    provided.reload
+
+    [ cash, listed, provided ].each do |security|
+      assert security.valid?
+      assert_not security.changed?, "validation dirtied #{security.ticker}: #{security.changes.inspect}"
+    end
   end
 
   test "every country in the config declares a development classification" do

@@ -23,8 +23,9 @@ class Security < ApplicationRecord
   # chk_securities_asset_sub_class, chk_securities_classification_source);
   # adding a value means changing both, deliberately.
   #
-  # Schema only for now: nothing writes these columns yet, so every security
-  # is unclassified (NULL) until a later drop populates them.
+  # `apply_classification_defaults` fills the two kinds a provider cannot
+  # answer (cash, crypto) and the region; everything else stays unclassified
+  # (NULL) until a provider, the user or an approved proposal answers it.
   #
   # The migration repeats these lists rather than reading them from here, so
   # that it produces the same schema whenever it runs. Changing a list is
@@ -35,6 +36,15 @@ class Security < ApplicationRecord
   # they hold provider vocabulary, which no two providers agree on. An
   # `inclusion` rule there would reject a value a provider legitimately
   # returns.
+  #
+  # `region` is NOT the same case, and grouping it with those two would be
+  # wrong. No provider supplies a region -- they supply a country, and the
+  # region is derived from it against a list this application owns -- so its
+  # vocabulary is closed and a model-level `inclusion` validation is the right
+  # enforcement; REGION_KEYS below is that list. It is left unconstrained in
+  # the DATABASE for a different reason: the list belongs in configuration,
+  # where widening it should not need a migration. The migration header says
+  # the same.
   ASSET_CLASSES = %w[
     alternative_investment commodity equity fixed_income liquidity real_estate
   ].freeze
@@ -364,6 +374,11 @@ class Security < ApplicationRecord
     # security whose classification the user has locked. That is what makes it
     # safe on every save, which is also how an existing security picks these
     # up: as it is next written to, with no backfill job.
+    #
+    # The order is a contract for the writers that follow, not something this
+    # code enforces: nothing yet reads `classification_source` to let a
+    # stronger writer replace a `default`. That arrives with provider
+    # classification ingestion; until then a stored default stays put.
     def apply_classification_defaults
       return if classification_locked?
 
@@ -390,6 +405,13 @@ class Security < ApplicationRecord
       # Each field is filled on its own. Guarding on "either is set" left a
       # half-classified security half-classified for good -- an asset class
       # with no sub-class is not a state anything downstream can group by.
+      # But only when the half already there agrees with the default: a cash
+      # security another writer called `equity` must not become an
+      # `equity`/`cash` pair nobody asserted. That disagreement is left for a
+      # stronger writer to settle.
+      return unless asset_class.blank? || asset_class == defaults.first
+      return unless asset_sub_class.blank? || asset_sub_class == defaults.last
+
       self.asset_class = defaults.first if asset_class.blank?
       self.asset_sub_class = defaults.last if asset_sub_class.blank?
       # Claimed only when this actually classified the instrument. Filling a
@@ -398,7 +420,6 @@ class Security < ApplicationRecord
     end
 
     def apply_default_region
-      return if region.present?
       # An offline security's `country_code` is not the instrument's listing
       # country. `Security::Resolver#offline_security` persists whatever the
       # caller passed, and the resolver's own ranking calls that value
@@ -410,7 +431,31 @@ class Security < ApplicationRecord
       # classify.
       return if offline?
 
-      self.region = REGIONS.dig(country_code.to_s.upcase, "region")
+      derived = REGIONS.dig(country_code.to_s.upcase, "region")
+
+      if region.blank?
+        self.region = derived
+      elsif country_code_changed? && !region_changed? && region == REGIONS.dig(country_code_was.to_s.upcase, "region")
+        # The country the region was read from has been corrected, and the
+        # region still says exactly what the old country implied -- so this
+        # callback is what put it there, and it is this callback's to move.
+        #
+        # There is no column recording who wrote the region, so agreement with
+        # the superseded country is what stands in for one. That is the same
+        # test `apply_classification_defaults` makes above before touching an
+        # asset class it did not assert. A region that disagrees was set by
+        # someone who knew something the country does not say -- a
+        # cross-listing, a fund domiciled away from what it holds -- and stays.
+        #
+        # Without this, correcting a country left the two halves of the same
+        # fact contradicting each other: `region` frozen on the old country
+        # while `development_status`, derived live from `country_code`, had
+        # already moved to the new one.
+        #
+        # A region the caller set in this same save is theirs, not this
+        # callback's, so `region_changed?` leaves it alone.
+        self.region = derived
+      end
     end
 
     def upcase_symbols
