@@ -578,7 +578,8 @@ class PortfoliosControllerTest < ActionDispatch::IntegrationTest
         income: { buckets: [ { month: Date.new(2026, 3, 1), amount: BigDecimal(40) } ], total: BigDecimal(40),
                   fees: BigDecimal(0), average_value: BigDecimal(0), fee_ratio: nil },
         trailing: { total: BigDecimal(40) }, bars: [ { label: "Mar 2026", short_label: "Mar", income: 40.0, expense: 0.0 } ],
-        securities: securities_table, yields: { aapl.id.to_s => BigDecimal("0.05"), msft.id.to_s => nil }
+        securities: securities_table, yields: { aapl.id.to_s => BigDecimal("0.05"), msft.id.to_s => nil },
+        rate_missing: false
       }
     )
     page = Nokogiri::HTML.fragment(html)
@@ -587,6 +588,49 @@ class PortfoliosControllerTest < ActionDispatch::IntegrationTest
     assert_no_match(/%/, page.at_css("tr[data-portfolio-income-security=MSFT]").text,
                     "no yield for MSFT: a dash, not 0.00%")
     assert_includes page.at_css("tr[data-portfolio-income-security=MSFT]").text, "—"
+  end
+
+  # R13: the totals are reported whatever happens, so the section has to say
+  # when something was left out of them. It says so where the figures are -- in
+  # both branches, since an income section that reads "nothing was paid" because
+  # every payout was unconvertible would be the worst place to stay quiet.
+  test "the income section warns that a missing exchange rate leaves income out" do
+    Portfolio::Performance.any_instance.stubs(:rate_missing?).returns(true)
+    Portfolio::Performance.any_instance.stubs(:income).returns(
+      buckets: [ { month: Date.new(2026, 3, 1), amount: BigDecimal("42.5") } ],
+      total: BigDecimal("42.5"), fees: BigDecimal(0), average_value: BigDecimal("2000"), fee_ratio: nil
+    )
+
+    get portfolio_path
+
+    assert_response :success
+    assert_select "#portfolio-income", text: /#{Regexp.escape(I18n.t("portfolios.income.rate_missing_title"))}/
+  end
+
+  test "the income section warns about a missing exchange rate even when it shows no income" do
+    Portfolio::Performance.any_instance.stubs(:rate_missing?).returns(true)
+    Portfolio::Performance.any_instance.stubs(:income).returns(
+      buckets: [], total: BigDecimal(0), fees: BigDecimal(0), average_value: BigDecimal("2000"), fee_ratio: nil
+    )
+
+    get portfolio_path
+
+    assert_response :success
+    assert_select "#portfolio-income", text: /#{Regexp.escape(I18n.t("portfolios.income.rate_missing_title"))}/
+    assert_select "#portfolio-income", text: /#{Regexp.escape(I18n.t("portfolios.income.no_income", period: Period.last_30_days.label))}/
+  end
+
+  test "the income section carries no exchange rate warning when no rate is missing" do
+    Portfolio::Performance.any_instance.stubs(:rate_missing?).returns(false)
+    Portfolio::Performance.any_instance.stubs(:income).returns(
+      buckets: [ { month: Date.new(2026, 3, 1), amount: BigDecimal("42.5") } ],
+      total: BigDecimal("42.5"), fees: BigDecimal(0), average_value: BigDecimal("2000"), fee_ratio: nil
+    )
+
+    get portfolio_path
+
+    assert_response :success
+    assert_select "#portfolio-income", text: /#{Regexp.escape(I18n.t("portfolios.income.rate_missing_title"))}/, count: 0
   end
 
   test "the income section says so when nothing was paid, and omits the fee line" do
@@ -805,8 +849,10 @@ class PortfoliosControllerTest < ActionDispatch::IntegrationTest
   # Measured 101, ceiling 103. Headroom was 6 for every previous pair and is 2
   # now, which is a choice and not an oversight: the ceiling is the number the
   # next section has to justify raising, and the two tests above, not this
-  # constant, are what prove the count does not grow with holdings. The figure
-  # has moved five times:
+  # constant, are what prove the count does not grow with holdings. This comment
+  # said 95 until the income section (#123), but `main` already measured 97 when
+  # that landed; the 95 -> 97 drift is not attributed to any change below. The
+  # figure has moved five times:
   #
   #   54 -> 61  the performance section: one Portfolio::Performance for the
   #             request, memoised on the registry, which is its only caller

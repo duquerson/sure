@@ -1,4 +1,4 @@
-<%# locals: (statement:, period:, as_of:, income:, trailing:, bars:, securities:, yields:) %>
+<%# locals: (statement:, period:, as_of:, income:, trailing:, bars:, securities:, yields:, rate_missing:) %>
 
 <%# Dividends and interest by the month they were paid. `income` is
     Portfolio::Performance#income for the selected period and `trailing` the
@@ -14,6 +14,18 @@
     no security shows up as a row rather than as a gap. %>
 <% currency = statement.family.currency %>
 <div id="portfolio-income" class="space-y-4">
+  <%# Above both branches: when every payout was unconvertible, "nothing was
+      paid" below would be false, and this is the one place that says why. The
+      figures are partial because an entry in a currency with no rate cannot be
+      converted (R13), not because the portfolio paid less. %>
+  <% if rate_missing %>
+    <div class="px-4">
+      <%= render DS::Alert.new(title: t("portfolios.income.rate_missing_title"), variant: :warning) do %>
+        <p class="text-xs text-secondary"><%= t("portfolios.income.rate_missing_body", currency: currency) %></p>
+      <% end %>
+    </div>
+  <% end %>
+
   <% if income[:buckets].any? %>
     <div class="px-4 flex flex-wrap items-end gap-x-8 gap-y-3">
       <div class="space-y-1">

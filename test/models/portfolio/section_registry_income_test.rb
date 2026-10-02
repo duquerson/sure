@@ -239,6 +239,38 @@ class Portfolio::SectionRegistryIncomeTest < ActiveSupport::TestCase
     assert_equal BigDecimal(12), locals[:income][:total]
   end
 
+  # R13 for the figures that cannot be withheld. Income, fees and the bars are
+  # money, so they are reported whatever happens -- but an entry in a currency
+  # with no rate drops out of their SQL sum, and a total that silently leaves
+  # something out is the defect Realised P&L names its exclusions to avoid. The
+  # section says so, for either window, because it prints both.
+  test "the income section flags a missing exchange rate, and not otherwise" do
+    pay @as_of - 10, 5
+    lay_history
+
+    assert_equal false, income_locals[:rate_missing], "the control: nothing foreign, so nothing missing"
+  end
+
+  test "the income section flags a missing exchange rate on a payout in the period" do
+    pay @as_of - 10, 5
+    lay_history
+    eur = create_portfolio_account(family: @family, currency: "EUR")
+    income_trade account: eur, date: @as_of - 5, amount: 2
+
+    assert_equal true, income_locals[:rate_missing]
+  end
+
+  # 200 days back is inside the year and outside the 30-day period. The trailing
+  # total is printed beside the period's, so its gap has to be flagged too.
+  test "the income section flags a missing exchange rate that is only in the trailing year" do
+    pay @as_of - 10, 5
+    lay_history
+    eur = create_portfolio_account(family: @family, currency: "EUR")
+    income_trade account: eur, date: @as_of - 200, amount: 2
+
+    assert_equal true, income_locals[:rate_missing]
+  end
+
   # Visible and empty, not absent: see the comment on the registry entry.
   test "a period with no income still shows the section, with no bars" do
     lay_history

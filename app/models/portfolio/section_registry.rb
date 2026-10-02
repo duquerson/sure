@@ -165,7 +165,8 @@ class Portfolio::SectionRegistry
           title: "portfolios.sections.income",
           partial: "portfolios/income",
           locals: shared_locals.merge(income: income, trailing: trailing_income, bars: income_bars,
-                                      securities: income_by_security, yields: income_yields),
+                                      securities: income_by_security, yields: income_yields,
+                                      rate_missing: income_rate_missing?),
           visible: true,
           collapsible: true
         },
@@ -633,7 +634,7 @@ class Portfolio::SectionRegistry
     def income_yields
       @income_yields ||= begin
         trailing = Portfolio::IncomeBySecurity.new(amounts: trailing_income[:by_security], total: trailing_income[:total])
-        withheld = performance.rate_missing? || trailing_performance.rate_missing?
+        withheld = income_rate_missing?
         held = holdings_rows.index_by { |row| row.security.id.to_s }
 
         unrated = unrated_currencies(held.values_at(*income_by_security.rows.map { |row| row.security.id.to_s }).compact)
@@ -668,6 +669,20 @@ class Portfolio::SectionRegistry
       return nil unless cost&.positive?
 
       trailing_amount / cost
+    end
+
+    # Whether a currency with no rate left something out of the income figures,
+    # in either window, since the section prints both.
+    #
+    # The totals, fees and bars are MONEY and are reported whatever happens, as
+    # Portfolio::Drivers' are; only the ratios are withheld (R13). But an entry
+    # in a currency with no rate falls out of their SQL sum, so they are partial
+    # without saying so. The section says so where the figures are, the way
+    # Realised P&L names the disposals it left out, rather than leaving a total
+    # that reads as complete. Both predicates are already computed for the
+    # sections above, so this costs no query.
+    def income_rate_missing?
+      performance.rate_missing? || trailing_performance.rate_missing?
     end
 
     # The bar payload, in the shape and for the reasons realized_gains_bars
