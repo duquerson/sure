@@ -16,6 +16,8 @@ en:
       re_apply_rule: Re-apply rule
       delete: Delete
       then: THEN
+      move_up: Run earlier
+      move_down: Run later
       and_more_conditions:
         one: and 1 more condition
         other: and %{count} more conditions
@@ -41,7 +43,9 @@ en:
       ai_cost_warning: AI-enabled rule actions will cost money.  Be sure to filter as narrowly as possible to avoid unnecessary costs.
       rules_heading: Rules
       sort_by: "Sort by:"
+      sort_priority: Priority
       sort_name: Name
+      priority_hint: Rules run from top to bottom. When two rules set the same field on a transaction, the lower one wins.
       sort_updated_at: Updated At
       toggle_sort_direction: Toggle sort direction
       no_rules_title: No rules yet
@@ -116,6 +120,9 @@ en:
       operators:
         contains: Contains
         does_not_contain: Does not contain
+        starts_with: Starts with
+        ends_with: Ends with
+        matches_regex: Matches regex
         equal_to: Equal to
         is_equal_to: Is equal to
         not_equal_to: Not equal to

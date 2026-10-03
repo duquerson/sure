@@ -121,6 +121,13 @@
                                   data: { action: "loan-rate-changes#add" }) %>
       </div>
 
+      <div class="space-y-2">
+        <%= loan_form.select :collateral_account_id,
+                  @collateral_candidates.map { |account| [ account.name, account.id ] },
+                  { label: t("loans.form.collateral_account"), include_blank: t("loans.form.collateral_account_none") } %>
+        <p class="text-sm text-secondary"><%= t("loans.form.collateral_account_hint") %></p>
+      </div>
+
       <div class="space-y-2 hidden" data-loan-offset-target="offsetAccounts">
         <%= loan_form.select :offset_account_ids,
                   @offset_accounts.map { |account| [ account.name, account.id ] },

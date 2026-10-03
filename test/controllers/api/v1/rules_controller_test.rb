@@ -112,6 +112,8 @@ class Api::V1::RulesControllerTest < ActionDispatch::IntegrationTest
     assert_equal "transaction", rule["resource_type"]
     assert_equal true, rule["active"]
     assert_equal "2024-01-01", rule["effective_date"]
+    assert_equal @rule.priority, rule["priority"]
+    assert_operator rule["priority"], :>, 0
 
     assert_equal 1, rule["conditions"].length
     assert_equal "transaction_name", rule["conditions"].first["condition_type"]

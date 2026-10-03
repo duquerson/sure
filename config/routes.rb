@@ -564,6 +564,9 @@ Rails.application.routes.draw do
   namespace :transactions do
     resource :bulk_deletion, only: :create
     resource :bulk_update, only: %i[new create]
+    resources :category_suggestions, only: %i[index create] do
+      post :accept, on: :collection
+    end
     resource :categorize, only: %i[show create] do
       patch :assign_entry, on: :collection
       get :preview_rule, on: :collection
@@ -669,6 +672,7 @@ Rails.application.routes.draw do
     member do
       get :confirm
       post :apply
+      patch :move
     end
 
     collection do

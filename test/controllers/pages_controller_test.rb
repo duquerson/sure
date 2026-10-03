@@ -14,6 +14,30 @@ class PagesControllerTest < ActionDispatch::IntegrationTest
     assert_response :ok
   end
 
+  test "dashboard shows net worth velocity and momentum beside the net worth" do
+    BalanceSheet::NetWorthVelocity.any_instance.stubs(:velocity).returns(Money.new(900, "USD"))
+    BalanceSheet::NetWorthVelocity.any_instance.stubs(:momentum).returns(Money.new(-100, "USD"))
+
+    get root_path
+
+    assert_response :ok
+    assert_select "#net-worth-chart [data-net-worth-pace]" do
+      assert_select "dd", text: "+$900.00 / month"
+      assert_select "dd", text: "−$100.00 / month"
+    end
+  end
+
+  test "dashboard leaves out the pace figures when history does not cover the period" do
+    BalanceSheet::NetWorthVelocity.any_instance.stubs(:velocity).returns(nil)
+    BalanceSheet::NetWorthVelocity.any_instance.stubs(:momentum).returns(nil)
+
+    get root_path
+
+    assert_response :ok
+    assert_select "#net-worth-chart"
+    assert_select "[data-net-worth-pace]", count: 0
+  end
+
   test "dashboard renders the net worth chart as drag-selectable, opting it out of card drag-and-drop" do
     get root_path
 

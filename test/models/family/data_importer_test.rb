@@ -31,6 +31,85 @@ class Family::DataImporterTest < ActiveSupport::TestCase
     assert_equal "Depository", account.accountable_type
   end
 
+  test "relinks a loan to the property that secured it, under the new account ids" do
+    ndjson = build_ndjson(collateral_records(collateral_ref: "old-property"))
+
+    result = Family::DataImporter.new(@family, ndjson).import!
+
+    property = result[:accounts].find { |account| account.accountable_type == "Property" }
+    loan = result[:accounts].find { |account| account.accountable_type == "Loan" }.loan
+    assert_equal property.id, loan.reload.collateral_account_id
+    assert_not_equal "old-property", loan.collateral_account_id
+  end
+
+  # Session imports arrive in chunks, and every other reference in them must
+  # already resolve (a missing one raises). A collateral id that does not would
+  # otherwise be dropped without a trace, so a loan in one chunk naming an asset
+  # in a later one would lose its link silently.
+  test "a session import raises when a loan's collateral has not been imported yet" do
+    session = @family.import_sessions.create!(expected_chunks: 2)
+    ndjson = build_ndjson(collateral_records(collateral_ref: "asset-in-a-later-chunk"))
+
+    assert_raises(Family::DataImporter::MissingReferenceError) do
+      Family::DataImporter.new(@family, ndjson, import_session: session).import!
+    end
+  end
+
+  test "a session import links a loan to an asset imported by an earlier chunk" do
+    session = @family.import_sessions.create!(expected_chunks: 2)
+    records = collateral_records(collateral_ref: "old-property")
+    Family::DataImporter.new(@family, build_ndjson([ records.last ]), import_session: session).import!
+
+    result = Family::DataImporter.new(@family, build_ndjson([ records.first ]), import_session: session).import!
+
+    loan = result[:accounts].find { |account| account.accountable_type == "Loan" }.loan
+    assert_not_nil loan.reload.collateral_account_id
+    assert_equal "House", loan.collateral_account.name
+  end
+
+  # The whole path: export a family whose loan sorts before its asset by id, then
+  # restore it with each account in a chunk of its own, in order.
+  test "an exported loan is relinked when each account arrives in its own chunk" do
+    source = Family.create!(name: "Source family")
+    loan_account = source.accounts.create!(
+      id: "00000000-0000-4000-8000-000000000001", name: "Mortgage", balance: 400_000, currency: "USD", accountable: Loan.new
+    )
+    asset = source.accounts.create!(
+      id: "ffffffff-ffff-4fff-8fff-ffffffffffff", name: "House", balance: 500_000, currency: "USD", accountable: Property.new
+    )
+    loan_account.loan.update!(collateral_account: asset)
+    ndjson = nil
+    Zip::File.open_buffer(Family::DataExporter.new(source).generate_export) { |zip| ndjson = zip.read("all.ndjson") }
+    lines = ndjson.split("\n").select { |line| JSON.parse(line)["type"] == "Account" }
+    session = @family.import_sessions.create!(expected_chunks: lines.size)
+
+    lines.each { |line| Family::DataImporter.new(@family, line, import_session: session).import! }
+
+    restored = @family.accounts.find_by!(name: "Mortgage").loan
+    assert_equal "House", restored.reload.collateral_account.name
+  end
+
+  test "leaves a loan unlinked when its collateral is not in the import" do
+    ndjson = build_ndjson(collateral_records(collateral_ref: "some-account-we-never-exported"))
+
+    result = Family::DataImporter.new(@family, ndjson).import!
+
+    loan = result[:accounts].find { |account| account.accountable_type == "Loan" }.loan
+    assert_nil loan.reload.collateral_account_id
+  end
+
+  test "a loan whose collateral the model refuses is imported unlinked and the refusal is logged" do
+    records = collateral_records(collateral_ref: "old-property")
+    records.first[:data][:currency] = "EUR"
+
+    assert_difference -> { DebugLogEntry.where(category: "import", family: @family).count }, 1 do
+      result = Family::DataImporter.new(@family, build_ndjson(records)).import!
+
+      loan = result[:accounts].find { |account| account.accountable_type == "Loan" }.loan
+      assert_nil loan.reload.collateral_account_id
+    end
+  end
+
   test "imports non-destructive account status from ndjson" do
     ndjson = build_ndjson([
       {
@@ -1883,6 +1962,60 @@ class Family::DataImporterTest < ActiveSupport::TestCase
     assert_equal category.id, action.value
   end
 
+  test "imports a rule's priority and keeps the exported run order" do
+    rule_data = ->(name, priority) {
+      data = {
+        name: name, resource_type: "transaction", active: true,
+        conditions: [ { condition_type: "transaction_name", operator: "like", value: name } ],
+        actions: [ { action_type: "exclude_transaction" } ]
+      }
+      data[:priority] = priority unless priority.nil?
+      { type: "Rule", version: 1, data: data.merge(id: SecureRandom.uuid) }
+    }
+
+    Family::DataImporter.new(@family, build_ndjson([ rule_data.call("Later", 9), rule_data.call("Sooner", 3) ])).import!
+
+    assert_equal [ "Sooner", "Later" ], @family.rules.prioritised.pluck(:name)
+    assert_equal [ 3, 9 ], @family.rules.prioritised.pluck(:priority)
+  end
+
+  # An export's numbers mean "relative to each other"; into a family that already has
+  # rules they must not collide with, or jump ahead of, the rules already there.
+  test "imported priorities are placed after the rules the family already has, keeping their order" do
+    existing = @family.rules.create!(resource_type: "transaction", name: "Existing", actions: [ Rule::Action.new(action_type: "exclude_transaction") ])
+    existing.update_columns(priority: 50)
+    rule_data = ->(name, priority) {
+      { type: "Rule", version: 1, data: {
+        id: SecureRandom.uuid, name: name, resource_type: "transaction", active: true, priority: priority,
+        conditions: [ { condition_type: "transaction_name", operator: "like", value: name } ],
+        actions: [ { action_type: "exclude_transaction" } ]
+      } }
+    }
+
+    Family::DataImporter.new(@family, build_ndjson([ rule_data.call("Later", 9), rule_data.call("Sooner", 3) ])).import!
+
+    assert_equal [ "Existing", "Sooner", "Later" ], @family.rules.prioritised.where(name: [ "Existing", "Sooner", "Later" ]).pluck(:name)
+    assert_equal [ 53, 59 ], @family.rules.where(name: [ "Sooner", "Later" ]).order(:priority).pluck(:priority)
+    assert_equal 50, existing.reload.priority
+  end
+
+  test "imports rules without a priority at the end of the run order, in file order" do
+    rule_data = ->(name) {
+      { type: "Rule", version: 1, data: {
+        id: SecureRandom.uuid, name: name, resource_type: "transaction", active: true,
+        conditions: [ { condition_type: "transaction_name", operator: "like", value: name } ],
+        actions: [ { action_type: "exclude_transaction" } ]
+      } }
+    }
+
+    existing = @family.rules.create!(resource_type: "transaction", name: "Existing", actions: [ Rule::Action.new(action_type: "exclude_transaction") ])
+    existing.update_columns(priority: 50)
+
+    Family::DataImporter.new(@family, build_ndjson([ rule_data.call("One"), rule_data.call("Two") ])).import!
+
+    assert_equal [ "Existing", "One", "Two" ], @family.rules.prioritised.where(name: [ "Existing", "One", "Two" ]).pluck(:name)
+  end
+
   test "imports transaction_tag rule condition by remapping the tag name to an id" do
     ndjson = build_ndjson([
       {
@@ -2749,6 +2882,18 @@ class Family::DataImporterTest < ActiveSupport::TestCase
 
     def build_ndjson(records)
       records.map(&:to_json).join("\n")
+    end
+
+    # A property and a loan. The loan is listed first, as an export's account
+    # order does not guarantee the asset comes before what it secures.
+    def collateral_records(collateral_ref:)
+      [
+        { type: "Account", data: { id: "old-loan", name: "Mortgage", balance: "400000.00", currency: "USD",
+                                   accountable_type: "Loan",
+                                   accountable: { subtype: "mortgage", collateral_account_id: collateral_ref } } },
+        { type: "Account", data: { id: "old-property", name: "House", balance: "500000.00", currency: "USD",
+                                   accountable_type: "Property", accountable: { subtype: "house" } } }
+      ]
     end
 
     # A bill, one non-monthly rule, a settled occurrence, and the payment that

@@ -23,9 +23,8 @@ class Family::Syncer
     family.auto_match_transfers!
 
     Rails.logger.info("Applying rules for family #{family.id}")
-    family.rules.where(active: true).each do |rule|
-      rule.apply_later
-    end
+    # One job, not one per rule: rules only have an order if they run in sequence.
+    ApplyAllRulesJob.perform_later(family, active_only: true, ignore_attribute_locks: false)
   end
 
   private
