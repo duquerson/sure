@@ -1,17 +1,20 @@
 class RulesController < ApplicationController
   include StreamExtensions
 
-  before_action :set_rule, only: [  :edit, :update, :destroy, :apply, :confirm ]
+  before_action :set_rule, only: [  :edit, :update, :destroy, :apply, :confirm, :move ]
 
   def index
-    @sort_by = params[:sort_by] || "name"
+    @sort_by = params[:sort_by] || "priority"
     @direction = params[:direction] || "asc"
 
-    allowed_columns = [ "name", "updated_at" ]
-    @sort_by = "name" unless allowed_columns.include?(@sort_by)
+    allowed_columns = [ "priority", "name", "updated_at" ]
+    @sort_by = "priority" unless allowed_columns.include?(@sort_by)
     @direction = "asc" unless [ "asc", "desc" ].include?(@direction)
 
-    @rules = Current.family.rules.includes(conditions: :sub_conditions).order(@sort_by => @direction)
+    rules = Current.family.rules.includes(conditions: :sub_conditions)
+    # Priority is the order rules run in, so it is always shown oldest-first;
+    # reversing it would make the arrows on each row point the wrong way.
+    @rules = @sort_by == "priority" ? rules.prioritised : rules.order(@sort_by => @direction)
 
     # Fetch recent rule runs with pagination
     recent_runs_scope = RuleRun
@@ -84,6 +87,12 @@ class RulesController < ApplicationController
     end
   end
 
+  def move
+    @rule.move(params[:direction]) if Rule::MOVE_DIRECTIONS.map(&:to_s).include?(params[:direction])
+
+    redirect_to rules_path
+  end
+
   def destroy
     @rule.destroy
     redirect_to rules_path, notice: t(".success")
@@ -118,25 +127,12 @@ class RulesController < ApplicationController
   end
 
   private
-    # Names the provider that will actually run, and prices against it.
-    #
-    # This previously hardcoded :openai, so an Anthropic install was quoted the
-    # wrong model and a family on Jev was quoted a provider that would not run
-    # at all. LlmUsage has no pricing for Jev, so the cost comes back nil and the
-    # view says so rather than inventing a figure.
+    # Pricing lives on Family so the batch suggestion page quotes the same way.
     def auto_categorize_estimate(scope, transaction_count: nil)
       family = scope.is_a?(Rule) ? scope.family : scope
       count = transaction_count || scope.affected_resource_count
-      model = family.categorization_model_name
-      return [ nil, nil ] if model.blank?
 
-      cost = LlmUsage.estimate_auto_categorize_cost(
-        transaction_count: count,
-        category_count: family.categories.count,
-        model: model
-      )
-
-      [ model, cost ]
+      family.auto_categorize_estimate(transaction_count: count)
     end
 
     # The reset itself happens in a background job, so an enqueue that never

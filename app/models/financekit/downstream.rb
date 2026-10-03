@@ -51,7 +51,7 @@ class Financekit::Downstream
         # Anything failing after it is the publisher's, so drop the attribution.
         account_provider = nil
         @item.family.auto_match_transfers!
-        @item.family.rules.where(active: true).find_each(&:apply_later)
+        ApplyAllRulesJob.perform_later(@item.family, active_only: true, ignore_attribute_locks: false)
 
         FinancekitBatch.where(id: pending)
           .update_all(downstream_completed_at: completed_at, updated_at: completed_at)

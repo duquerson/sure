@@ -13,6 +13,8 @@
         <p class="text-sm text-secondary"><%= t(".data_not_available") %></p>
       <% end %>
     </div>
+
+    <%= render UI::NetWorthPace.new(balance_sheet: balance_sheet, period: period) %>
   </div>
 
   <% if series.any? %>

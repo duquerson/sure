@@ -143,6 +143,10 @@ de:
           holdings: Bestände
           total_value: Gesamtwert
         vs_available_history: vs. verfügbarer Verlauf
+    net_worth_pace:
+      velocity: Tempo
+      momentum: Dynamik
+      per_month: "%{amount} / Monat"
     period_picker:
       aria_label: 'Zeitraum: %{period}'
   ds:

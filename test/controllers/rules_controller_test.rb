@@ -5,6 +5,80 @@ class RulesControllerTest < ActionDispatch::IntegrationTest
     sign_in @user = users(:family_admin)
   end
 
+  test "index lists rules in priority order by default" do
+    family = @user.family
+    family.rules.destroy_all
+    # Created Bravo, Charlie, Alpha; by name they would read Alpha, Bravo, Charlie. Only
+    # priority produces Charlie, Alpha, Bravo.
+    bravo, charlie, alpha = %w[Bravo Charlie Alpha].map do |name|
+      family.rules.create!(resource_type: "transaction", name: name, actions: [ Rule::Action.new(action_type: "exclude_transaction") ])
+    end
+    charlie.update_columns(priority: 1)
+    alpha.update_columns(priority: 2)
+    bravo.update_columns(priority: 3)
+
+    get rules_url
+
+    assert_response :success
+    positions = %w[Charlie Alpha Bravo].map { |name| response.body.index(">#{name}<") }
+    assert_equal positions.sort, positions
+    assert positions.all?
+  end
+
+  test "index still sorts by name on request and then offers no reordering" do
+    get rules_url(sort_by: "name")
+
+    assert_response :success
+    assert_select "a[href*='move']", count: 0
+  end
+
+  test "index offers reordering controls in priority order, except where they would do nothing" do
+    family = @user.family
+    family.rules.destroy_all
+    first = family.rules.create!(resource_type: "transaction", name: "first", actions: [ Rule::Action.new(action_type: "exclude_transaction") ])
+    second = family.rules.create!(resource_type: "transaction", name: "second", actions: [ Rule::Action.new(action_type: "exclude_transaction") ])
+
+    get rules_url
+
+    assert_select "a[data-turbo-method='patch'][href='#{move_rule_path(first, direction: "down")}']", count: 1
+    assert_select "a[data-turbo-method='patch'][href='#{move_rule_path(second, direction: "up")}']", count: 1
+    assert_select "a[href='#{move_rule_path(first, direction: "up")}']", count: 0
+    assert_select "a[href='#{move_rule_path(second, direction: "down")}']", count: 0
+  end
+
+  test "move changes the order and redirects back to the list" do
+    family = @user.family
+    family.rules.destroy_all
+    first = family.rules.create!(resource_type: "transaction", name: "first", actions: [ Rule::Action.new(action_type: "exclude_transaction") ])
+    second = family.rules.create!(resource_type: "transaction", name: "second", actions: [ Rule::Action.new(action_type: "exclude_transaction") ])
+
+    patch move_rule_url(second, direction: "up")
+
+    assert_redirected_to rules_url
+    assert_equal [ second, first ], family.rules.prioritised.to_a
+  end
+
+  test "move ignores a direction it does not know" do
+    family = @user.family
+    family.rules.destroy_all
+    first = family.rules.create!(resource_type: "transaction", name: "first", actions: [ Rule::Action.new(action_type: "exclude_transaction") ])
+    second = family.rules.create!(resource_type: "transaction", name: "second", actions: [ Rule::Action.new(action_type: "exclude_transaction") ])
+
+    assert_no_changes -> { family.rules.prioritised.map(&:id) } do
+      patch move_rule_url(second, direction: "sideways")
+    end
+
+    assert_redirected_to rules_url
+  end
+
+  test "move cannot reach another family's rule" do
+    other = families(:empty).rules.create!(resource_type: "transaction", actions: [ Rule::Action.new(action_type: "exclude_transaction") ])
+
+    patch move_rule_url(other, direction: "down")
+
+    assert_response :not_found
+  end
+
   test "should get new" do
     get new_rule_url(resource_type: "transaction")
     assert_response :success
@@ -247,6 +321,23 @@ class RulesControllerTest < ActionDispatch::IntegrationTest
 
     assert_response :success
     assert_match "~typesafe/jev-latest", response.body
+  end
+
+  # Pins the figure and the "no pricing" branch that the batch suggestion page
+  # (#130, 11.4) shares through Family#auto_categorize_estimate.
+  test "confirm quotes the estimated cost, and says so when there is no pricing" do
+    rule = rules(:one)
+    rule.actions.create!(action_type: "auto_categorize")
+    Provider::Registry.stubs(:preferred_llm_provider).returns(Provider::Openai.allocate)
+    LlmUsage.stubs(:estimate_auto_categorize_cost).returns(0.0123)
+
+    get confirm_rule_url(rule)
+    assert_match "~$0.0123", response.body
+
+    LlmUsage.stubs(:estimate_auto_categorize_cost).returns(nil)
+    get confirm_rule_url(rule)
+    assert_no_match "~$", response.body
+    assert_match "Cost estimation unavailable", response.body
   end
 
   test "confirm does not name Jev when the family has not selected it" do
