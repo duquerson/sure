@@ -84,9 +84,10 @@ class Security::LookThroughTest < ActiveSupport::TestCase
   # --------------------------------------------------- what the weights mean
 
   # The figures deliberately sum to 99.4, not 100. A fund's reported holdings
-  # routinely fall short -- cash, rounding, securities lending -- so code that
-  # divides by 100 silently under-reports every constituent. Dividing by the
-  # actual sum is the only thing that makes the expansion add up.
+  # routinely fall short by a little -- cash, rounding, securities lending -- and
+  # a list this close to 100 is the whole fund (`WHOLE_FUND_FROM`), so dividing
+  # it by 100 would silently under-report every constituent. Dividing by the
+  # actual sum is what makes the expansion add up.
   test "weights are normalised against their actual sum, not against 100" do
     import(info(constituents: [
       constituent("MSFT", "Microsoft", 50.0),
@@ -104,6 +105,22 @@ class Security::LookThroughTest < ActiveSupport::TestCase
     naive = 50.0 / 100
     assert_not_in_delta naive, weights["MSFT"].to_f, 0.000001,
                         "dividing by 100 would give the same answer, so this asserts nothing"
+  end
+
+  # The same rule the portfolio applies (#269): a list well short of 100 is
+  # divided by 100, so each name keeps its reported share and the rest stays
+  # unlisted rather than being spread over the names that were listed.
+  test "a list well short of 100 is divided by 100, not by its own sum" do
+    import(info(constituents: [
+      constituent("MSFT", "Microsoft", 50.0),
+      constituent("NVDA", "Nvidia", 30.0)
+    ]))
+
+    weights = @security.reload.look_through_weights
+
+    assert_in_delta 0.5, weights["MSFT"].to_f, 0.000001, "50 of the fund is half of it, not 50/80"
+    assert_in_delta 0.3, weights["NVDA"].to_f, 0.000001
+    assert_in_delta 0.8, weights.values.sum.to_f, 0.000001, "the listed names were scaled up to the whole fund"
   end
 
   test "a security with no constituents looks through to nothing" do

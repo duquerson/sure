@@ -423,20 +423,15 @@ module Security::Provided
     end
   end
 
-  # The fund expanded into what it actually holds, as fractions summing to 1.
+  # The fund expanded into what it actually holds, as fractions of the fund.
   #
-  # Normalised against the ACTUAL sum rather than against 100. A fund's reported
-  # holdings routinely fall short -- cash, rounding, securities lending -- so
-  # dividing by 100 silently under-reports every constituent and the expansion
-  # does not add up to the position it replaces.
+  # A whole-fund list (summing to 99 or more) is normalised against its actual
+  # sum, so rounding drift does not under-report every constituent. A partial
+  # list is divided by 100 and its fractions sum to less than 1: the rest of the
+  # fund is unlisted, not the listed names' to carry. The rule lives in
+  # `Security::Constituent.fund_shares`, which `InvestmentStatement` reads too.
   def look_through_weights
-    weighted = constituents.where.not(weight: nil)
-    total = weighted.sum(:weight)
-    return {} if total.zero?
-
-    weighted.each_with_object({}) do |constituent, map|
-      map[constituent.ticker] = constituent.weight / total
-    end
+    Security::Constituent.fund_shares(constituents.where.not(weight: nil).to_a).listed
   end
 
   def classification_attributes_from(data)

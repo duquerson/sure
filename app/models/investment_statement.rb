@@ -243,11 +243,11 @@ class InvestmentStatement
   # where it would be a control that visibly does nothing.
   # Does the portfolio hold a fund look-through could actually expand?
   #
-  # Existence of constituent ROWS is not enough. `Security#look_through_weights`
-  # divides by the sum of the non-nil weights and returns {} when that sum is
-  # zero, so a fund whose constituents carry nil or zero weights expands to
-  # nothing and the toggle renders as a control that visibly does nothing
-  # (raised by cubic on #201).
+  # Existence of constituent ROWS is not enough. `Security::Constituent.fund_shares`
+  # skips nil weights and returns no shares when the rest sum to zero, so a
+  # fund whose constituents carry nil or zero weights expands to nothing and
+  # the toggle renders as a control that visibly does nothing (raised by cubic
+  # on #201).
   #
   # The condition mirrors that method's own rule rather than approximating it:
   # non-nil weights, summed PER SECURITY, greater than zero. A row-level
@@ -1067,20 +1067,25 @@ class InvestmentStatement
     # total by the weight of every constituent we happen not to hold, which for a
     # broad index fund is nearly all of it.
     def look_through_split(security, column, value, cash_bucket = nil)
-      weights = constituent_weights_for(security)
-      return nil if weights.empty?
+      shares = constituent_shares_for(security)
+      return nil if shares.listed.empty?
 
       known = constituent_securities
 
-      weights.each_with_object(Hash.new(0)) do |(ticker, weight), split|
+      split = shares.listed.each_with_object(Hash.new(0)) do |(ticker, weight), buckets|
         constituent = known[ticker.to_s.upcase]
         # `cash_bucket` is carried through: a constituent whose own Security row
         # is `kind: "cash"` belongs in liquidity/cash exactly as a directly held
         # cash security does. Passing nil filed it under UNCLASSIFIED, so the
         # same money answered differently depending on how it was held.
         bucket = constituent ? classification_bucket(constituent, column, cash_bucket) : UNCLASSIFIED
-        split[bucket] += value * weight
+        buckets[bucket] += value * weight
       end
+      # The part of a partial list no row names (#269). Its class is not known,
+      # so it is unclassified rather than the fund's own class; dropping it
+      # would shrink the portfolio by it.
+      split[UNCLASSIFIED] += value * shares.unlisted if shares.unlisted.positive?
+      split
     end
 
     # ONE row set that every look-through level slices, rather than each level
@@ -1118,7 +1123,7 @@ class InvestmentStatement
           } ]
         else
           names = constituent_names_for(holding.security)
-          weights.map do |ticker, weight|
+          rows = weights.map do |ticker, weight|
             key = ticker.to_s.upcase
             constituent = constituent_securities[key]
             {
@@ -1136,8 +1141,30 @@ class InvestmentStatement
               value: value * weight
             }
           end
+          rows << unlisted_remainder_row(holding.security, value)
+          rows.compact
         end
       end
+    end
+
+    # A partial list's unlisted part, as one row per fund at the bottom level
+    # (#269), so the ladder still adds up to the fund. Unclassified in both
+    # columns, because nothing says what it holds. Keyed by the fund rather than
+    # by a ticker: it is this fund's remainder and must not merge with another
+    # fund's, or with any real position.
+    def unlisted_remainder_row(security, value)
+      unlisted = constituent_shares_for(security).unlisted
+      return nil unless unlisted.positive?
+
+      {
+        asset_class: UNCLASSIFIED,
+        asset_sub_class: UNCLASSIFIED,
+        id: "unlisted:#{security.id}",
+        name: I18n.t("models.investment_statement.unlisted_constituents",
+                     fund: security.name.presence || security.ticker),
+        held_directly: false,
+        value: value * unlisted
+      }
     end
 
     # Constituent labels by upcased ticker, from the rows themselves.
@@ -1152,13 +1179,16 @@ class InvestmentStatement
     # 5 on 13 holdings -- and most holdings are not funds, so nearly all of them
     # were queries that returned nothing.
     def constituent_weights_for(security)
-      rows = constituent_rows_by_security[security.id]
-      return {} if rows.blank?
+      constituent_shares_for(security).listed
+    end
 
-      total = rows.sum(&:weight)
-      return {} if total.zero?
-
-      rows.each_with_object({}) { |row, map| map[row.ticker] = row.weight / total }
+    # The listed fractions and the unlisted remainder, by the one rule
+    # `Security::Constituent.fund_shares` holds for this and for
+    # `Security#look_through_weights` alike.
+    def constituent_shares_for(security)
+      @constituent_shares ||= {}
+      @constituent_shares[security.id] ||=
+        Security::Constituent.fund_shares(constituent_rows_by_security[security.id] || [])
     end
 
     # Extracted so the ticker resolver can read the same rows without triggering
