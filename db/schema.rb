@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_09_30_090000) do
+ActiveRecord::Schema[8.1].define(version: 2026_10_01_090000) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_catalog.plpgsql"
   enable_extension "pgcrypto"
@@ -2413,8 +2413,10 @@ ActiveRecord::Schema[8.1].define(version: 2026_09_30_090000) do
     t.date "effective_date"
     t.uuid "family_id", null: false
     t.string "name"
+    t.integer "priority", default: 0, null: false
     t.string "resource_type", null: false
     t.datetime "updated_at", null: false
+    t.index ["family_id", "priority"], name: "index_rules_on_family_id_and_priority"
     t.index ["family_id"], name: "index_rules_on_family_id"
   end
 

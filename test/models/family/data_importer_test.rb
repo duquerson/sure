@@ -1883,6 +1883,60 @@ class Family::DataImporterTest < ActiveSupport::TestCase
     assert_equal category.id, action.value
   end
 
+  test "imports a rule's priority and keeps the exported run order" do
+    rule_data = ->(name, priority) {
+      data = {
+        name: name, resource_type: "transaction", active: true,
+        conditions: [ { condition_type: "transaction_name", operator: "like", value: name } ],
+        actions: [ { action_type: "exclude_transaction" } ]
+      }
+      data[:priority] = priority unless priority.nil?
+      { type: "Rule", version: 1, data: data.merge(id: SecureRandom.uuid) }
+    }
+
+    Family::DataImporter.new(@family, build_ndjson([ rule_data.call("Later", 9), rule_data.call("Sooner", 3) ])).import!
+
+    assert_equal [ "Sooner", "Later" ], @family.rules.prioritised.pluck(:name)
+    assert_equal [ 3, 9 ], @family.rules.prioritised.pluck(:priority)
+  end
+
+  # An export's numbers mean "relative to each other"; into a family that already has
+  # rules they must not collide with, or jump ahead of, the rules already there.
+  test "imported priorities are placed after the rules the family already has, keeping their order" do
+    existing = @family.rules.create!(resource_type: "transaction", name: "Existing", actions: [ Rule::Action.new(action_type: "exclude_transaction") ])
+    existing.update_columns(priority: 50)
+    rule_data = ->(name, priority) {
+      { type: "Rule", version: 1, data: {
+        id: SecureRandom.uuid, name: name, resource_type: "transaction", active: true, priority: priority,
+        conditions: [ { condition_type: "transaction_name", operator: "like", value: name } ],
+        actions: [ { action_type: "exclude_transaction" } ]
+      } }
+    }
+
+    Family::DataImporter.new(@family, build_ndjson([ rule_data.call("Later", 9), rule_data.call("Sooner", 3) ])).import!
+
+    assert_equal [ "Existing", "Sooner", "Later" ], @family.rules.prioritised.where(name: [ "Existing", "Sooner", "Later" ]).pluck(:name)
+    assert_equal [ 53, 59 ], @family.rules.where(name: [ "Sooner", "Later" ]).order(:priority).pluck(:priority)
+    assert_equal 50, existing.reload.priority
+  end
+
+  test "imports rules without a priority at the end of the run order, in file order" do
+    rule_data = ->(name) {
+      { type: "Rule", version: 1, data: {
+        id: SecureRandom.uuid, name: name, resource_type: "transaction", active: true,
+        conditions: [ { condition_type: "transaction_name", operator: "like", value: name } ],
+        actions: [ { action_type: "exclude_transaction" } ]
+      } }
+    }
+
+    existing = @family.rules.create!(resource_type: "transaction", name: "Existing", actions: [ Rule::Action.new(action_type: "exclude_transaction") ])
+    existing.update_columns(priority: 50)
+
+    Family::DataImporter.new(@family, build_ndjson([ rule_data.call("One"), rule_data.call("Two") ])).import!
+
+    assert_equal [ "Existing", "One", "Two" ], @family.rules.prioritised.where(name: [ "Existing", "One", "Two" ]).pluck(:name)
+  end
+
   test "imports transaction_tag rule condition by remapping the tag name to an id" do
     ndjson = build_ndjson([
       {
