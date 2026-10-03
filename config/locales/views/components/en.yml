@@ -19,6 +19,13 @@ en:
     period_picker:
       aria_label: "Time period: %{period}"
     account:
+      collateral_position:
+        secured_by: Secured by
+        secures: Secures
+        value: Value
+        debt: Debt secured
+        equity: Equity
+        equity_withheld: Equity is not shown because the loans secured on this asset cannot all be included for you.
       activity_feed:
         toggle_selection_checkboxes: Toggle selection
       balance_reconciliation:
