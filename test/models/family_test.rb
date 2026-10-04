@@ -640,6 +640,84 @@ class FamilyTest < ActiveSupport::TestCase
     assert_raises(ArgumentError) { family.resolved_categorization_provider }
   end
 
+  test "earliest_activity_date returns the earliest Transaction date in the family" do
+    family = families(:dylan_family)
+
+    transaction_date = 4.years.ago.to_date
+    account = family.accounts.first
+    account.entries.create!(
+      date: transaction_date,
+      amount: 125,
+      currency: account.currency,
+      name: "Older transaction #{SecureRandom.hex(3)}",
+      entryable: Transaction.new,
+    )
+
+    assert_equal transaction_date, family.earliest_activity_date
+  end
+
+  test "earliest_activity_date honors a Trade earlier than every Transaction" do
+    family = families(:dylan_family)
+
+    account = family.accounts.first
+    trade_date = 7.years.ago.to_date
+    trade = Trade.new(qty: 1, price: 100, currency: account.currency)
+    account.entries.create!(
+      date: trade_date,
+      amount: 100,
+      currency: account.currency,
+      name: "Older trade #{SecureRandom.hex(3)}",
+      entryable: trade,
+    )
+
+    assert_equal trade_date, family.earliest_activity_date
+  end
+
+  test "earliest_activity_date ignores Valuations of every kind" do
+    # Fresh family: dylan's fixture already carries a Trade entry, which would
+    # legitimately be the earliest activity and make this assertion fail.
+    family = Family.create!(
+      name: "Valuations only #{SecureRandom.hex(3)}",
+      currency: "USD",
+      user: users(:jon),
+    )
+    account = family.accounts.create!(
+      name: "Property #{SecureRandom.hex(3)}",
+      kind: "property",
+      label: "House",
+      currency: "USD",
+      accountable: Property.new,
+    )
+    older_valuation_date = 8.years.ago.to_date
+    account.entries.create!(
+      date: older_valuation_date,
+      amount: 100_000,
+      currency: "USD",
+      name: "Opening valuation",
+      entryable: Valuation.new(kind: "opening_anchor"),
+    )
+    account.entries.create!(
+      date: 1.month.ago.to_date,
+      amount: 110_000,
+      currency: "USD",
+      name: "Later valuation",
+      entryable: Valuation.new,
+    )
+
+    assert_nil family.earliest_activity_date,
+      "a Valuation is not activity, whatever entryable type it carries"
+  end
+
+  test "earliest_activity_date returns nil when the family has no entries" do
+    family = Family.create!(
+      name: "No activity #{SecureRandom.hex(3)}",
+      currency: "USD",
+      user: users(:jon),
+    )
+
+    assert_nil family.earliest_activity_date
+  end
+
   private
     def set_preview_features(user, enabled)
       user.update!(preferences: (user.preferences || {}).merge("preview_features_enabled" => enabled))

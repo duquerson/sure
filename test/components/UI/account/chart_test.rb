@@ -183,6 +183,46 @@ class UI::Account::ChartTest < ViewComponent::TestCase
     assert_equal family_oldest, component.period.start_date
   end
 
+  # #300 stacking: `all_time` from `Period.from_key` is now family-scoped to the
+  # earliest Transaction/Trade. The account chart's clamp (which keys off
+  # `p.start_date`) must fire the same way when the account's own history begins
+  # AFTa that family anchor -- it narrows to the account's own start, not the
+  # family's, and the key is preserved. Proves the clamp path still stacks with
+  # the new anchor rather than being shadowed by it.
+  test "all_time family anchor is clamped to the account's own start when it postdates it" do
+    Current.session = Session.create!(user: users(:family_admin))
+    account_start = 10.days.ago.to_date
+    @account.stubs(:history_start_date).returns(account_start)
+
+    family_all_time = Period.from_key("all_time")
+    component = UI::Account::Chart.new(account: @account, period: family_all_time)
+
+    assert_equal "all_time", component.period.key
+    assert_equal account_start, component.period.start_date,
+      "the account's own history start must win when it postdates the family anchor"
+    assert_equal family_all_time.end_date, component.period.end_date
+  ensure
+    Current.session = nil
+  end
+
+  # #300 stacking (the other side): an account whose history is OLDER than the
+  # family anchor is not widened -- the account chart keeps the family-scoped
+  # start rather than clamping back to the account's much earlier date.
+  test "all_time family anchor is not clamped when the account history predates it" do
+    Current.session = Session.create!(user: users(:family_admin))
+    account_start = 2.years.ago.to_date
+    @account.stubs(:history_start_date).returns(account_start)
+
+    family_all_time = Period.from_key("all_time")
+    component = UI::Account::Chart.new(account: @account, period: family_all_time)
+
+    assert_equal "all_time", component.period.key
+    assert_equal family_all_time.start_date, component.period.start_date,
+      "an account whose history predates the family anchor keeps the family start"
+  ensure
+    Current.session = nil
+  end
+
   private
     # 10 shares at $100 market price; gain = 1000 - cost_basis * 10
     def create_holding(cost_basis:)

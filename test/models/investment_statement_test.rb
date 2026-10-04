@@ -9,6 +9,46 @@ class InvestmentStatementTest < ActiveSupport::TestCase
     @statement = InvestmentStatement.new(@family, user: nil)
   end
 
+  # #300 sentinel: `all_time_totals` reaches `Period.all_time`, whose anchor
+  # changed from "oldest entry of any kind" to "earliest Transaction/Trade".
+  # For a family whose only old entry is a Valuation, the code path is the
+  # oldest_entry_date fallback -- so a trade made on the anchor's window must
+  # still be included in the all-time totals. If the anchor were silently
+  # widened to the Valuation date or dropped to the 5-year default, this
+  # trade's date would still be inside the range, so the assertion that
+  # carries the test is that the total is unchanged from the explicitly
+  # all-time range (not "it happens to include the trade").
+  test "all_time_totals is unchanged for a family whose oldest entry is a Valuation" do
+    establish_family_context
+    account = family_account
+    stray_valuation = Date.new(2000, 8, 7)
+    account.entries.create!(
+      date: stray_valuation, amount: 100_000, currency: "USD",
+      name: "Opening valuation", entryable: Valuation.new(kind: "opening_anchor")
+    )
+    trade_date = Date.new(2025, 3, 15)
+    security = create_portfolio_security
+    create_portfolio_trade(account: account, security: security, qty: 10, price: 50, date: trade_date, label: "Buy")
+
+    # Explicit wide range (covers trade) vs the all_time sentinel.
+    explicit = Period.new(start_date: trade_date - 1.month, end_date: Date.current)
+    assert_equal @statement.totals(period: explicit).contributions,
+                 @statement.all_time_totals.contributions,
+                 "all_time_totals must include the trade in the anchor window regardless of the stray Valuation"
+    assert_operator @statement.all_time_totals.contributions, :>, 0,
+      "the trade must be counted, not silently excluded by the new anchor"
+  end
+
+  private
+
+    def establish_family_context
+      Current.session = Session.create!(user: users(:empty))
+    end
+
+    def family_account
+      create_portfolio_account(@family)
+    end
+
   test "portfolio_value and cash_balance with a single-currency family" do
     create_investment_account(balance: 1000, cash_balance: 100)
 

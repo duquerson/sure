@@ -96,14 +96,44 @@ class PeriodTest < ActiveSupport::TestCase
     assert_equal "All", period.label_short
   end
 
-  test "all_time period uses family's oldest entry date" do
-    # Mock Current.family to return a family with oldest_entry_date
+  test "all_time period uses family's earliest_transaction_or_trade_date" do
     mock_family = mock("family")
-    mock_family.expects(:oldest_entry_date).returns(2.years.ago.to_date)
+    mock_family.expects(:earliest_activity_date).returns(2.years.ago.to_date)
+    # Fallback is not consulted if the primary anchor is present; stub it so
+    # the strict mock does not raise if a future refactor regresses the
+    # ordering.
+    mock_family.stubs(:oldest_entry_date).returns(Date.current)
     Current.expects(:family).at_least_once.returns(mock_family)
 
     period = Period.from_key("all_time")
-    assert_equal 2.years.ago.to_date, period.start_date
+    assert_equal 2.years.ago.to_date - 1.month, period.start_date
+    assert_equal Date.current, period.end_date
+  end
+
+  test "all_time period anchors to an earlier Trade over a later Transaction" do
+    mock_family = mock("family")
+    mock_family.expects(:earliest_activity_date).returns(3.years.ago.to_date)
+    # Simulate the "Trade wins" case: oldest_entry_date reflects the oldest
+    # entry of any kind (Transaction in 1998, Trade in 2023); the code picks
+    # the new method's value, not the older any-type one.
+    mock_family.stubs(:oldest_entry_date).returns(Date.new(1998, 8, 7))
+    Current.expects(:family).at_least_once.returns(mock_family)
+
+    period = Period.from_key("all_time")
+    assert_equal 3.years.ago.to_date - 1.month, period.start_date
+  end
+
+  test "all_time period falls back to oldest_entry_date when the family has only Valuations" do
+    # A Valuation in 2000 with a Transaction-free family: earliest_activity_date
+    # is nil, so the guard falls back to the any-entry anchor (today's
+    # behaviour, preserved per the plan).
+    mock_family = mock("family")
+    mock_family.expects(:earliest_activity_date).returns(nil)
+    mock_family.expects(:oldest_entry_date).returns(Date.new(2000, 8, 7))
+    Current.expects(:family).at_least_once.returns(mock_family)
+
+    period = Period.from_key("all_time")
+    assert_equal Date.new(2000, 8, 7), period.start_date
     assert_equal Date.current, period.end_date
   end
 
@@ -147,5 +177,150 @@ class PeriodTest < ActiveSupport::TestCase
     period = Period.from_key("all_time")
     assert_equal 5.years.ago.to_date, period.start_date
     assert_equal Date.current, period.end_date
+  end
+
+  # ---------------------------------------------------------------------------
+  # #300 real-family matrix. The mock tests above pin the code path in isolation;
+  # these build a real family, real accounts and real entries so the
+  # entryable_type scoping (Transaction/Trade only), the −1 month offset, and
+  # the fallback order are exercised against live data rather than mocks.
+  # ---------------------------------------------------------------------------
+
+  setup do
+    @family = families(:empty)
+  end
+
+  teardown do
+    Current.session = nil
+  end
+
+  test "#300 positive: a stray 2000 Valuation no longer stretches all_time when a 2025 Transaction exists" do
+    establish_family_context
+    account = family_account
+    account.entries.create!(
+      date: Date.new(2000, 8, 7), amount: 100, currency: "USD",
+      name: "Stray evaluation", entryable: Valuation.new(kind: "opening_anchor")
+    )
+    tx_date = Date.new(2025, 3, 15)
+    account.entries.create!(
+      date: tx_date, amount: 200, currency: "USD",
+      name: "Real spend", entryable: Transaction.new
+    )
+
+    period = Period.from_key("all_time")
+    # Fails before the change (returned the 2000 Valuation date).
+    assert_equal tx_date - 1.month, period.start_date
+    assert_equal Date.current, period.end_date
+  end
+
+  test "#300 a Trade earlier than the earliest Transaction wins" do
+    establish_family_context
+    account = family_account
+    account.entries.create!(
+      date: Date.new(2025, 3, 15), amount: 200, currency: "USD",
+      name: "Later transaction", entryable: Transaction.new
+    )
+    trade_date = Date.new(2024, 1, 10)
+    account.entries.create!(
+      date: trade_date, amount: 500, currency: "USD",
+      name: "Earlier trade",
+      entryable: Trade.new(qty: 5, price: 100, currency: "USD")
+    )
+
+    period = Period.from_key("all_time")
+    assert_equal trade_date - 1.month, period.start_date
+  end
+
+  test "#300 delta: the same family anchors identically with or without the stray 2000 Valuation" do
+    establish_family_context
+    account = family_account
+    tx_date = Date.new(2025, 3, 15)
+    account.entries.create!(
+      date: tx_date, amount: 200, currency: "USD",
+      name: "Spend", entryable: Transaction.new
+    )
+
+    start_without_stray = Period.from_key("all_time").start_date
+
+    account.entries.create!(
+      date: Date.new(2000, 8, 7), amount: 100, currency: "USD",
+      name: "Stray evaluation", entryable: Valuation.new(kind: "opening_anchor")
+    )
+
+    start_with_stray = Period.from_key("all_time").start_date
+
+    assert_equal start_without_stray, start_with_stray,
+      "a stray older Valuation must not move the all_time anchor"
+    assert_equal tx_date - 1.month, start_with_stray
+  end
+
+  test "#300 Q2: a valuations-only family falls back to oldest_entry_date" do
+    establish_family_context
+    account = family_account
+    val_date = Date.new(2000, 8, 7)
+    account.entries.create!(
+      date: val_date, amount: 100, currency: "USD",
+      name: "Only activity is a Valuation", entryable: Valuation.new(kind: "opening_anchor")
+    )
+
+    family = Current.family
+    assert_nil family.earliest_activity_date, "a Valuation is not activity"
+
+    period = Period.from_key("all_time")
+    # Preserves today's behaviour: the any-entry anchor, not the 5-year default.
+    assert_equal val_date, period.start_date
+  end
+
+  test "#300 empty family keeps the 5-year fallback" do
+    establish_family_context
+    # @family (:empty) has no accounts and no entries at all.
+
+    period = Period.from_key("all_time")
+    assert_equal 5.years.ago.to_date, period.start_date
+    assert_equal Date.current, period.end_date
+  end
+
+  test "#300 first transaction dated today does not push start past today" do
+    establish_family_context
+    account = family_account
+    account.entries.create!(
+      date: Date.current, amount: 100, currency: "USD",
+      name: "First activity today", entryable: Transaction.new
+    )
+
+    period = Period.from_key("all_time")
+    # A start that is today or later degrades to the historical 5-year range so
+    # the chart always shows a meaningful window.
+    assert_operator period.start_date, :<=, Date.current
+    assert_equal 5.years.ago.to_date, period.start_date
+  end
+
+  test "#300 other period keys are untouched by the all_time change" do
+    {
+      "last_30_days"   => 30.days.ago.to_date,
+      "last_90_days"   => 90.days.ago.to_date,
+      "last_365_days"  => 365.days.ago.to_date,
+      "last_5_years"   => 5.years.ago.to_date,
+      "last_10_years"  => 10.years.ago.to_date
+    }.each do |key, expected_start|
+      period = Period.from_key(key)
+      assert_equal expected_start, period.start_date, "#{key} start must be fixed"
+      assert_equal Date.current, period.end_date, "#{key} end must be today"
+    end
+  end
+
+  private
+
+    def establish_family_context
+      Current.session = Session.create!(user: users(:empty))
+      assert_equal @family, Current.family, "family context must be real"
+    end
+
+    def family_account
+      @family.accounts.create!(
+        name: "Activity #{SecureRandom.hex(3)}",
+        balance: 1_000, currency: "USD", accountable: Investment.new
+      )
+    end
   end
 end

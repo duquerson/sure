@@ -14,8 +14,20 @@ class Account::ChartablePeriodTest < ActiveSupport::TestCase
     assert_equal @family, Current.family, "the family context must be real, not assumed"
 
     @all_time = Period.from_key("all_time")
-    assert_equal @family.oldest_entry_date, @all_time.start_date,
-      "all_time must be genuinely family-scoped here, not the 5-year fallback"
+    # The family-scoped start anchors to the earliest Transaction/Trade (not
+    # any entry type); a stray older Valuation no longer stretches it. Assert
+    # against the new anchor so a regression in either direction (silently
+    # falling back to the 5-year default, or reverting to oldest_entry_date)
+    # fails loudly instead of passing against whatever anchor happens to be
+    # used downstream. See #300.
+    family_activity = @family.earliest_activity_date
+    if family_activity.present? && family_activity < Date.current
+      assert_equal family_activity - 1.month, @all_time.start_date,
+        "all_time must be genuinely family-scoped to the earliest Tx/Trade, not the 5-year fallback or an any-entry date"
+    else
+      assert_operator @all_time.start_date, :<, Date.current,
+        "all_time must be genuinely family-scoped here, not the 5-year fallback"
+    end
   end
 
   teardown do
