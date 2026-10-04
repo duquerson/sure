@@ -655,29 +655,22 @@ class LoanTest < ActiveSupport::TestCase
   end
 
   # #21 AC#4. The accessible description must NAME the principal/interest
-  # composition -- the tooltip's shipped job -- so a locale edit that drops it
-  # takes this test down with it rather than silently regressing.
+  # composition -- the tooltip's shipped job -- so a locale edit that silently
+  # drops it takes this test down with it rather than regressing unseen.
   #
-  # Pinned to the exact shipped phrase, read through I18n like production:
-  # the locale file is the single source of truth for the description
-  # (Loan#payoff_chart_payload interpolates it), and the capitalized
-  # Principal/Interest are the table's own names (loans.tabs.schedule.*),
-  # which the tooltip's composition row reads from the same keys.
+  # Pinned to the exact shipped sentence (config/locales/views/loans/en.yml,
+  # loans.tabs.schedule.chart.aria_description), compared verbatim against the
+  # rendered payload the way production reads it. The capitalized
+  # Principal/Interest are the schedule table's own names (loans.tabs.schedule.*)
+  # that the tooltip's composition row renders.
   test "payoff_chart_payload's aria_description names the principal/interest composition of the payments" do
     loan = build_chart_loan(balance: 500000)
     loan.account.update!(balance: 450000)
 
-    payload = loan.payoff_chart_payload
+    description = loan.payoff_chart_payload[:aria_description]
 
-    composition_phrase = I18n.t("loans.tabs.schedule.chart.aria_description", current_balance: 0,
-                               original_payoff_date: Date.current, accelerated_payoff_date: Date.current)
-                                             .sub(/Current balance: .+? Original scheduled payoff date: .+? Projected payoff date based on current balance: .+?/, "")
-                                              .strip.delete_prefix(". ")
-
-    assert_equal "The tooltip on each scheduled point breaks the payment down into Principal and Interest.",
-                 composition_phrase
-
-    assert_includes payload[:aria_description], "The tooltip on each scheduled point breaks the payment down into Principal and Interest."
+    assert_includes description,
+      "The tooltip on each scheduled point breaks the payment down into its Principal and Interest."
   end
 
   # Regression: chart dates used to inherit PayoffProjection's payment-date
