@@ -188,6 +188,11 @@ class RedbarkAccount::LoanDetailsProcessor
       return nil if from.nil? || to.nil? || to <= from
 
       months = ((to.year - from.year) * 12) + (to.month - from.month)
+      # An end date before the origination day in its month has not reached the
+      # anniversary, so that month is not complete (as in
+      # PlaidAccount::Liabilities::StudentLoanProcessor#term_months). Counting
+      # the calendar month alone overstated the term by one (#303).
+      months -= 1 if from + months.months > to
       months.positive? ? months : nil
     end
 
@@ -203,7 +208,12 @@ class RedbarkAccount::LoanDetailsProcessor
     def parse_decimal(value)
       return nil if value.blank?
 
-      BigDecimal(value.to_s)
+      amount = BigDecimal(value.to_s)
+      # Only a positive finite figure is a principal. `BigDecimal` accepts "0",
+      # a negative, "NaN" and "Infinity"; the first three were stored, and
+      # `Infinity` raised out of `enrich_attributes` (numeric overflow), which
+      # stops the rate being applied because terms are written before it (#303).
+      amount if amount.finite? && amount.positive?
     rescue ArgumentError, TypeError
       nil
     end

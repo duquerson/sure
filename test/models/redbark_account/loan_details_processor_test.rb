@@ -364,6 +364,77 @@ class RedbarkAccount::LoanDetailsProcessorTest < ActiveSupport::TestCase
                     "the detected change did not reach the rate resolver, so nothing re-amortises"
   end
 
+  # #303. A term is whole months. An end date before the origination day in its
+  # month has not reached the anniversary, so that last month is not complete:
+  # counting it overstates the term by one, as
+  # PlaidAccount::Liabilities::StudentLoanProcessor#term_months does not.
+  test "a term stops at the last complete month" do
+    @loan.update!(start_date: nil, initial_balance: nil, term_months: nil)
+    detail(
+      lendingRate: "0.0675",
+      loanDetails: { "originalStartDate" => "2024-01-15", "loanEndDate" => "2025-01-10" }
+    )
+
+    process
+
+    assert_equal 11, @loan.reload.term_months,
+                 "an end date four days short of the anniversary was counted as a full twelfth month"
+  end
+
+  # The boundary: on the anniversary day the month is complete. Passes with or
+  # without the fix, so it is what stops the fix over-correcting.
+  test "a term ending on the anniversary day counts that month" do
+    @loan.update!(start_date: nil, initial_balance: nil, term_months: nil)
+    detail(
+      lendingRate: "0.0675",
+      loanDetails: { "originalStartDate" => "2024-01-15", "loanEndDate" => "2025-01-15" }
+    )
+
+    process
+
+    assert_equal 12, @loan.reload.term_months
+  end
+
+  # #303. Loan#original_balance does not read `initial_balance` on this tree, so
+  # a bad principal reaches the loan form and the account-creation flow rather
+  # than the maths -- but it is still a figure no loan was ever drawn for. One
+  # test per value, NOT a loop: the processor caches its loan, so a loop would
+  # let the first stored value stop the later iterations writing anything.
+  [ "0", "-400000", "NaN", "Infinity" ].each do |amount|
+    test "a principal of #{amount} is not stored" do
+      @loan.update_columns(initial_balance: nil)
+      detail(lendingRate: "0.0675", loanDetails: { "originalLoanAmount" => amount })
+
+      process
+
+      assert_nil @loan.reload.initial_balance,
+                 "an originalLoanAmount of #{amount} was stored as the loan's principal"
+    end
+  end
+
+  # Terms are applied BEFORE the rate. `Infinity` used to raise out of
+  # enrich_attributes (numeric field overflow), which stopped the rate being
+  # applied and lost the account its rate detection on every sync.
+  test "a malformed principal does not cost the loan its rate" do
+    @loan.update_columns(initial_balance: nil)
+    detail(lendingRate: "0.0675", loanDetails: { "originalLoanAmount" => "Infinity" })
+
+    assert_nothing_raised { process }
+
+    assert_equal({ "2026-09-21" => BigDecimal("6.75") }, rates,
+                 "the rate was lost because the principal beside it was malformed")
+  end
+
+  # Without this the guard is satisfied by storing nothing at all.
+  test "a positive principal is stored" do
+    @loan.update_columns(initial_balance: nil)
+    detail(lendingRate: "0.0675", loanDetails: { "originalLoanAmount" => "400000" })
+
+    process
+
+    assert_equal BigDecimal("400000"), @loan.reload.initial_balance
+  end
+
   private
     # Stamped as fetched on the sync's own date, which is what the importer
     # does on a successful refresh. `fetched_at:` lets a test make the snapshot
