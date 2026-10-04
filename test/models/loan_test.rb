@@ -654,6 +654,32 @@ class LoanTest < ActiveSupport::TestCase
     assert_includes payload[:aria_description], I18n.l(loan.payoff_projection.payoff_date, format: :long)
   end
 
+  # #21 AC#4. The accessible description must NAME the principal/interest
+  # composition -- the tooltip's shipped job -- so a locale edit that drops it
+  # takes this test down with it rather than silently regressing.
+  #
+  # Pinned to the exact shipped phrase, read through I18n like production:
+  # the locale file is the single source of truth for the description
+  # (Loan#payoff_chart_payload interpolates it), and the capitalized
+  # Principal/Interest are the table's own names (loans.tabs.schedule.*),
+  # which the tooltip's composition row reads from the same keys.
+  test "payoff_chart_payload's aria_description names the principal/interest composition of the payments" do
+    loan = build_chart_loan(balance: 500000)
+    loan.account.update!(balance: 450000)
+
+    payload = loan.payoff_chart_payload
+
+    composition_phrase = I18n.t("loans.tabs.schedule.chart.aria_description", current_balance: 0,
+                               original_payoff_date: Date.current, accelerated_payoff_date: Date.current)
+                                             .sub(/Current balance: .+? Original scheduled payoff date: .+? Projected payoff date based on current balance: .+?/, "")
+                                              .strip.delete_prefix(". ")
+
+    assert_equal "The tooltip on each scheduled point breaks the payment down into Principal and Interest.",
+                 composition_phrase
+
+    assert_includes payload[:aria_description], "The tooltip on each scheduled point breaks the payment down into Principal and Interest."
+  end
+
   # Regression: chart dates used to inherit PayoffProjection's payment-date
   # anchoring bug (Date.current.next_month instead of the loan's real
   # payment anchor day). Verifies the chart's forward-looking series line up
@@ -793,7 +819,7 @@ class LoanTest < ActiveSupport::TestCase
     loan = family.accounts.create!(
       name: "Unknown Offset Loan", balance: 250_000, currency: "USD",
       accountable: Loan.new(rate_type: "variable", interest_rate: 5, term_months: 240)
-    ).loan
+    )
 
     assert_no_difference "LoanOffsetAccount.count" do
       refute loan.update(offset_account_ids: [ SecureRandom.uuid ]),
