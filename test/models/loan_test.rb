@@ -682,7 +682,7 @@ class LoanTest < ActiveSupport::TestCase
   test "payoff_projection_with_extra returns a fresh projection boosted by the given amount" do
     loan = build_chart_loan(balance: 500000)
 
-    with_extra = loan.payoff_projection_with_extra(amount: "100", frequency: "monthly")
+    with_extra = loan.payoff_projection_with_extra(amount: "100")
 
     assert_not_same loan.payoff_projection, with_extra
     assert_equal loan.payoff_projection.monthly_payment + Money.new(100, "USD"), with_extra.monthly_payment
@@ -690,7 +690,7 @@ class LoanTest < ActiveSupport::TestCase
 
   test "payoff_chart_payload accepts a caller-supplied projection and labels it from the raw what-if input" do
     loan = build_chart_loan(balance: 500000)
-    with_extra = loan.payoff_projection_with_extra(amount: "200", frequency: "monthly")
+    with_extra = loan.payoff_projection_with_extra(amount: "200")
 
     payload = loan.payoff_chart_payload(
       projection: with_extra,
@@ -715,7 +715,7 @@ class LoanTest < ActiveSupport::TestCase
   test "payoff_chart_payload's aria_description reflects the caller-supplied projection, not the baseline" do
     loan = build_chart_loan(balance: 500000)
     baseline_payoff_date = loan.payoff_projection.payoff_date
-    with_extra = loan.payoff_projection_with_extra(amount: "200", frequency: "monthly")
+    with_extra = loan.payoff_projection_with_extra(amount: "200")
     assert_not_equal baseline_payoff_date, with_extra.payoff_date, "test setup should exercise a real divergence"
 
     payload = loan.payoff_chart_payload(projection: with_extra, extra_payment_amount: "200", extra_payment_frequency: "monthly")
@@ -731,10 +731,66 @@ class LoanTest < ActiveSupport::TestCase
     assert_equal loan.payoff_projection.payoff_date, loan.payoff_chart_payload[:accelerated_payoff_date]&.then { Date.iso8601(_1) }
   end
 
+  # --- #304: the Extra repayments tab draws the extra line BESIDE the baseline -
+
+  test "an extra projection adds its own series beside the baseline projection" do
+    loan = build_chart_loan(balance: 500000)
+    as_of = Date.current
+    baseline = Loan::PayoffProjection.new(loan, as_of: as_of)
+    extra = loan.payoff_projection_with_extra(amount: "200", as_of: as_of)
+
+    payload = loan.payoff_chart_payload(projection: baseline, extra_projection: extra, require_divergence: false, as_of: as_of)
+
+    assert_equal baseline.payoff_date.iso8601, payload[:accelerated_payoff_date],
+      "the baseline line stays the no-extra projection"
+    assert_equal extra.payoff_date.iso8601, payload[:extra_payoff_date]
+    assert_equal extra.payoff_date.iso8601, payload[:extra_projection].last[:date]
+    assert_operator Date.iso8601(payload[:extra_payoff_date]), :<, Date.iso8601(payload[:accelerated_payoff_date])
+    assert_equal extra.payments.length, payload[:extra_projection].length
+    assert_equal I18n.t("loans.tabs.schedule.chart.extra_payoff"), payload[:labels][:extra]
+    assert_includes payload[:aria_description], I18n.l(extra.payoff_date, format: :long)
+  end
+
+  test "the Extra repayments chart shows for a loan that is exactly on schedule" do
+    loan = build_chart_loan(balance: 500000)
+    baseline = Loan::PayoffProjection.new(loan)
+    assert_not baseline.diverges_from_schedule?, "test setup should be on schedule"
+
+    assert_nil loan.payoff_chart_payload(projection: baseline), "the Schedule tab's gate is unchanged"
+
+    payload = loan.payoff_chart_payload(projection: baseline, require_divergence: false)
+    assert payload.present?
+    assert_equal baseline.payoff_date.iso8601, payload[:accelerated_payoff_date]
+  end
+
+  test "without an extra projection the payload carries exactly the keys it always has" do
+    loan = build_chart_loan(balance: 500000)
+    loan.account.update!(balance: 450000)
+
+    payload = loan.payoff_chart_payload
+
+    assert_equal %i[today currency scheduled_history current_balance original_projection accelerated_projection
+                    original_payoff_date accelerated_payoff_date ahead extra_payment_label labels aria_label aria_description],
+      payload.keys
+    assert_equal %i[today scheduled original accelerated principal interest], payload[:labels].keys
+  end
+
+  test "an extra projection that cannot be projected adds no series" do
+    loan = build_chart_loan(balance: 500000)
+    extra = loan.payoff_projection_with_extra(amount: "200")
+    extra.stubs(:applicable?).returns(false)
+
+    payload = loan.payoff_chart_payload(projection: Loan::PayoffProjection.new(loan), extra_projection: extra, require_divergence: false)
+
+    assert_not payload.key?(:extra_projection)
+    assert_not payload.key?(:extra_payoff_date)
+    assert_not payload[:labels].key?(:extra)
+  end
+
   test "payoff_chart_payload is unaffected by what-if params when the extra payment doesn't cover interest" do
     loan = build_chart_loan(balance: 500000)
     loan.account.update!(balance: 800000) # payment (even boosted a little) still can't cover interest
-    with_extra = loan.payoff_projection_with_extra(amount: "10", frequency: "monthly")
+    with_extra = loan.payoff_projection_with_extra(amount: "10")
 
     payload = loan.payoff_chart_payload(projection: with_extra)
 

@@ -69,4 +69,34 @@ class LoanPayoffChartTest < ApplicationSystemTestCase
       assert_equal next_scheduled_date.iso8601, payload["original_projection"].first["date"]
     end
   end
+
+  # #304: the extra line is drawn IN ADDITION to the three series the chart
+  # already has, so this asserts it by its own marker rather than by a path
+  # count, and checks the other three are still there beside it.
+  test "the Extra repayments tab draws the extra line beside the existing series only when an amount is entered" do
+    start_date = Date.current
+    loan_account = Account.create! \
+      family: @user.family,
+      name: "Extra Line Loan",
+      balance: 500000,
+      currency: "USD",
+      accountable: Loan.create!(
+        subtype: "mortgage", interest_rate: 3.5, term_months: 360, rate_type: "fixed", start_date: start_date
+      )
+    loan_account.entries.create!(
+      name: "Starting balance", amount: 500000, currency: "USD", date: start_date,
+      entryable: Valuation.new(kind: "opening_anchor")
+    )
+
+    visit account_path(loan_account, tab: "extra_repayments")
+    assert_selector "[data-controller='loan-payoff-chart'] svg path[data-series='original']"
+    assert_selector "[data-controller='loan-payoff-chart'] svg path[data-series='projected']"
+    assert_no_selector "[data-controller='loan-payoff-chart'] svg path[data-series='extra']"
+
+    visit account_path(loan_account, tab: "extra_repayments", extra_payment: { amount: "200" })
+    extra_line = find("[data-controller='loan-payoff-chart'] svg path[data-series='extra']")
+    assert_not_equal "none", extra_line.native.css_value("stroke")
+    assert_selector "[data-controller='loan-payoff-chart'] svg path[data-series='original']"
+    assert_selector "[data-controller='loan-payoff-chart'] svg path[data-series='projected']"
+  end
 end

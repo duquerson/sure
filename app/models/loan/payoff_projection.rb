@@ -297,6 +297,25 @@ class Loan
       (original_remaining_interest - total_interest.amount)
     end
 
+    # How much less interest this projection pays than `baseline` -- the
+    # Extra repayments tab's question, "what does paying extra save me?",
+    # rather than #interest_saved's "where am I against the contract?". On a
+    # loan already ahead of schedule the two differ by whatever was paid ahead,
+    # which is exactly what this comparison must not count (#304). nil when
+    # either side cannot be projected.
+    def interest_saved_versus(baseline)
+      return nil unless applicable? && baseline.applicable?
+      baseline.total_interest.amount - total_interest.amount
+    end
+
+    # How many fewer payments this projection takes than `baseline`. The
+    # #months_saved sibling measures against the contract; see
+    # #interest_saved_versus for why the tab needs this one instead.
+    def months_sooner_than(baseline)
+      return nil unless applicable? && baseline.applicable?
+      baseline.payment_count - payment_count
+    end
+
     private
 
       # True when the MODELLED repayment is no greater than the first period's

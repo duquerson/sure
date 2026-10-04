@@ -49,6 +49,20 @@ en:
         unknown: Unknown
         edit_loan_details: "Edit loan details"
         variable_with_offset: Variable + offset
+      extra_repayments:
+        intro: "See how much sooner the loan is paid off, and how much interest you save, if you pay an extra amount each month on top of the current repayment."
+        amount_label: Extra each month
+        amount_placeholder: "0.00"
+        apply: Apply
+        clear: Clear
+        payoff_with_extra: Payoff with extra
+        payoff_without_extra: Payoff without extra
+        interest_saved: Interest saved
+        months_sooner:
+          one: "%{count} month sooner"
+          other: "%{count} months sooner"
+        projection_not_converged: The loan does not pay off within the supported term at the current repayment. Enter an extra amount to see whether paying more clears it.
+        variable_rate_notice: "This loan's rate can change. The projection applies the rate changes already recorded on this loan and keeps the current repayment, so a rate change that hasn't been recorded yet will shift these figures."
       schedule:
         current_monthly_payment: Current Monthly Payment
         total_interest: Total Interest
@@ -76,24 +90,15 @@ en:
           scheduled_history: "Scheduled (contracted terms)"
           original_payoff: Original schedule
           accelerated_payoff: Projected payoff
+          extra_payoff: With the extra each month
           aria_label: "Loan payoff comparison chart"
           aria_description: "Chart comparing the loan's original scheduled payoff against a projection based on the current balance. Current balance: %{current_balance}. Original scheduled payoff date: %{original_payoff_date}. Projected payoff date based on current balance: %{accelerated_payoff_date}."
+          aria_description_extra: "Projected payoff date with the extra monthly payment: %{extra_payoff_date}."
           extra_payment_applied: "Modeling an extra %{amount} %{frequency}"
           frequency:
             weekly: per week
             monthly: per month
             yearly: per year
-        extra_payment:
-          amount_label: Extra payment
-          amount_placeholder: "0.00"
-          frequency_label: Frequency
-          weekly: per week
-          monthly: per month
-          yearly: per year
-          apply: Apply
-          clear: Clear
-          approximation_notice: "Weekly and yearly amounts are converted to a monthly-equivalent figure for modeling -- this is an approximation, not a true weekly/annual payment schedule."
-          variable_rate_notice: "This loan's rate can change. The projection applies the rate changes already recorded on this loan and keeps the current repayment, so a rate change that hasn't been recorded yet will shift these figures."
         number: "#"
         date: Date
         payment: Payment

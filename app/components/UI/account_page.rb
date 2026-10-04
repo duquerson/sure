@@ -83,6 +83,8 @@ class UI::AccountPage < ApplicationComponent
       render "#{account.accountable_type.downcase.pluralize}/tabs/#{tab}", account: account
     when :schedule
       render_schedule_tab
+    when :extra_repayments
+      render_extra_repayments_tab
     when :statements
       render_statement_tab
     end
@@ -130,12 +132,28 @@ class UI::AccountPage < ApplicationComponent
     dom_id(account, :schedule_tab)
   end
 
+  # Mirrors render_schedule_tab, for the same reason: the eager branch must
+  # still render a <turbo-frame>, or the tab's form has no frame to target.
+  def render_extra_repayments_tab
+    return render "accounts/show/extra_repayments_frame", account: account if active_tab == :extra_repayments
+
+    turbo_frame_tag extra_repayments_tab_frame_id,
+                    src: helpers.account_path(account, tab: "extra_repayments"),
+                    loading: :lazy
+  end
+
+  def extra_repayments_tab_frame_id
+    dom_id(account, :extra_repayments_tab)
+  end
+
   private
     # Only show the Schedule tab when the loan actually has a schedule to
     # show -- e.g. not for a loan missing a rate or term.
     def loan_tabs
       base = [ :overview, :activity ]
       base << :schedule if account.loan&.amortizable?
+      # Only when there is something left to pay extra against (#304).
+      base << :extra_repayments if account.loan && Loan::PayoffProjection.eligible_for_extra_payment?(account.loan)
       base
     end
 end

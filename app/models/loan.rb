@@ -282,14 +282,22 @@ class Loan < ApplicationRecord
 
   # A fresh (unmemoized) projection modeling a hypothetical extra payment on
   # top of the actual-balance projection above -- "what if I also paid an
-  # extra $X/week|month|year". Purely a simulation: never touches
-  # account.balance or the persisted schedule. amount/frequency are expected
-  # to already be validated at the request boundary (see
-  # AccountsController#extra_payment_params); an unsupported frequency
-  # raises, matching PayoffProjection.monthly_equivalent's contract.
-  def payoff_projection_with_extra(amount:, frequency:)
-    extra = PayoffProjection.monthly_equivalent(amount: amount, frequency: frequency, currency: account.currency)
-    PayoffProjection.new(self, extra_payment: extra)
+  # extra $X each month". Purely a simulation: never touches account.balance
+  # or the persisted schedule. `amount` is expected to already be validated at
+  # the request boundary (see AccountsController#extra_payment_params).
+  #
+  # Monthly only (#304): the Extra repayments tab asks for one amount paid
+  # each month, so nothing here is approximated from another cadence. `as_of`
+  # lets the tab pin the same "today" on this projection and its baseline.
+  def payoff_projection_with_extra(amount:, as_of: Date.current)
+    extra = PayoffProjection.monthly_equivalent(amount: amount, frequency: "monthly", currency: account.currency)
+    PayoffProjection.new(self, extra_payment: extra, as_of: as_of)
+  end
+
+  # The Extra repayments tab's figures (#304): this loan with an extra amount
+  # paid each month, against the same loan without it, on one `as_of`.
+  def extra_repayment_comparison(amount:, as_of: Date.current)
+    ExtraRepaymentComparison.new(self, amount: amount, as_of: as_of)
   end
 
   # Chart payload contrasting the original schedule's remaining trajectory
@@ -304,7 +312,15 @@ class Loan < ApplicationRecord
   # with an extra payment. nil unless there's a real, meaningful divergence
   # to show (mirrors the Schedule tab's summary-card gate, so the chart and
   # cards appear/disappear together).
-  def payoff_chart_payload(projection: payoff_projection, extra_payment_amount: nil, extra_payment_frequency: nil)
+  #
+  # The Extra repayments tab (#304) passes `require_divergence: false`, because
+  # an on-schedule loan is exactly where it needs a baseline to compare
+  # against, and an `extra_projection` that is drawn BESIDE `projection`
+  # rather than in place of it. Both default so the Schedule tab's payload is
+  # unchanged: the extra keys only appear when an extra projection does.
+  # `as_of` is the caller's single "today" (see CLAUDE.md on reference dates).
+  def payoff_chart_payload(projection: payoff_projection, extra_projection: nil, extra_payment_amount: nil,
+                           extra_payment_frequency: nil, require_divergence: true, as_of: Date.current)
     # `amortization_schedule` recomputes its memoization signature on every
     # call -- read it once here rather than repeating calls throughout this
     # method (`projection` is already the one instance the caller resolved,
@@ -315,12 +331,12 @@ class Loan < ApplicationRecord
     # Materiality (including the one-payment cleanup artefact two
     # independently-terminated simulations produce) is the projection's own
     # business -- see Loan::PayoffProjection#diverges_from_schedule?.
-    return nil unless projection.diverges_from_schedule?
+    return nil if require_divergence && !projection.diverges_from_schedule?
 
-    today = Date.current
+    today = as_of
     scheduled_rows = schedule.display_rows
 
-    {
+    payload = {
       today: today.iso8601,
       currency: account.currency,
       # NOTE: these are the *scheduled/contracted* balances from the persisted
@@ -359,7 +375,9 @@ class Loan < ApplicationRecord
       original_payoff_date: schedule.payoff_date&.iso8601,
       accelerated_payoff_date: projection.payoff_date&.iso8601,
       ahead: projection.months_saved.positive?,
-      extra_payment_label: extra_payment_label(projection, extra_payment_amount, extra_payment_frequency),
+      # With an extra projection the label describes THAT line; the baseline
+      # carries no extra payment, so reading it would always give nil.
+      extra_payment_label: extra_payment_label(extra_projection || projection, extra_payment_amount, extra_payment_frequency),
       labels: {
         today: I18n.t("loans.tabs.schedule.chart.today"),
         scheduled: I18n.t("loans.tabs.schedule.chart.scheduled_history"),
@@ -382,6 +400,20 @@ class Loan < ApplicationRecord
         accelerated_payoff_date: I18n.l(projection.payoff_date, format: :long)
       )
     }
+
+    return payload unless extra_projection&.applicable?
+
+    payload[:extra_projection] = extra_projection.payments.map { |p|
+      { date: p[:payment_date].iso8601, balance: p[:ending_balance].to_f }
+    }
+    payload[:extra_payoff_date] = extra_projection.payoff_date&.iso8601
+    payload[:labels][:extra] = I18n.t("loans.tabs.schedule.chart.extra_payoff")
+    payload[:aria_description] = [
+      payload[:aria_description],
+      I18n.t("loans.tabs.schedule.chart.aria_description_extra",
+        extra_payoff_date: I18n.l(extra_projection.payoff_date, format: :long))
+    ].join(" ")
+    payload
   end
 
   # One annual percentage -> monthly decimal rate conversion, so the two
