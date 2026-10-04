@@ -92,7 +92,7 @@
     </ul>
     <%# The chart's key figures as real DOM text for screen readers. %>
     <p class="sr-only"><%= chart_payload[:aria_description] %></p>
-  <% elsif comparison.baseline_does_not_converge? %>
-    <p class="text-sm text-secondary"><%= t(".projection_not_converged") %></p>
+  <% elsif (notice = comparison.non_convergence_notice) %>
+    <p class="text-sm text-secondary"><%= t(".projection_not_converged.#{notice}") %></p>
   <% end %>
 </div>

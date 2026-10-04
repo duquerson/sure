@@ -1422,6 +1422,33 @@ class AccountsControllerTest < ActionDispatch::IntegrationTest
     assert_select "button[data-id='extra_repayments']", count: 0
   end
 
+  test "a loan the current repayment never clears says what the entered extra does, not to enter one" do
+    start_date = Date.current
+    loan_account = Account.create!(
+      family: @user.family, name: "Stuck Loan", balance: 100000, currency: "USD",
+      accountable: Loan.create!(subtype: "mortgage", interest_rate: 5.0, term_months: 12, rate_type: "fixed", start_date: start_date)
+    )
+    loan_account.entries.create!(
+      name: "Starting balance", amount: 100000, currency: "USD", date: start_date,
+      entryable: Valuation.new(kind: "opening_anchor")
+    )
+    loan = loan_account.loan.tap(&:ensure_amortization_schedule_current!)
+    threshold = loan.amortization_schedule.monthly_payment.amount / (BigDecimal("5.0") / 100 / 12)
+    loan_account.update!(balance: (threshold * BigDecimal("0.995")).round(2))
+    enter_amount = I18n.t("loans.tabs.extra_repayments.projection_not_converged.enter_amount")
+    cleared = I18n.t("loans.tabs.extra_repayments.projection_not_converged.cleared_by_extra")
+
+    get account_url(loan_account, tab: "extra_repayments")
+    assert_response :success
+    assert_includes response.body, enter_amount
+
+    get account_url(loan_account, tab: "extra_repayments", extra_payment: { amount: "200000" })
+    assert_response :success
+    assert_select "[data-testid='extra-payoff-date']"
+    assert_not_includes response.body, enter_amount
+    assert_includes response.body, cleared
+  end
+
   test "a non-loan account has no Extra repayments tab" do
     get account_url(accounts(:depository))
 

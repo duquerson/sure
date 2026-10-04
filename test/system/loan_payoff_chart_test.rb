@@ -72,9 +72,11 @@ class LoanPayoffChartTest < ApplicationSystemTestCase
 
   # #304: the extra line is drawn IN ADDITION to the three series the chart
   # already has, so this asserts it by its own marker rather than by a path
-  # count, and checks the other three are still there beside it.
+  # count, and checks the other three are still there beside it. The loan
+  # starts two years back so it has scheduled payments behind it: a loan
+  # starting today draws no history line, and the test could not see it go.
   test "the Extra repayments tab draws the extra line beside the existing series only when an amount is entered" do
-    start_date = Date.current
+    start_date = 2.years.ago.to_date
     loan_account = Account.create! \
       family: @user.family,
       name: "Extra Line Loan",
@@ -88,7 +90,10 @@ class LoanPayoffChartTest < ApplicationSystemTestCase
       entryable: Valuation.new(kind: "opening_anchor")
     )
 
+    loan_account.loan.ensure_amortization_schedule_current!
+
     visit account_path(loan_account, tab: "extra_repayments")
+    assert_selector "[data-controller='loan-payoff-chart'] svg path[data-series='history']"
     assert_selector "[data-controller='loan-payoff-chart'] svg path[data-series='original']"
     assert_selector "[data-controller='loan-payoff-chart'] svg path[data-series='projected']"
     assert_no_selector "[data-controller='loan-payoff-chart'] svg path[data-series='extra']"
@@ -96,6 +101,7 @@ class LoanPayoffChartTest < ApplicationSystemTestCase
     visit account_path(loan_account, tab: "extra_repayments", extra_payment: { amount: "200" })
     extra_line = find("[data-controller='loan-payoff-chart'] svg path[data-series='extra']")
     assert_not_equal "none", extra_line.native.css_value("stroke")
+    assert_selector "[data-controller='loan-payoff-chart'] svg path[data-series='history']"
     assert_selector "[data-controller='loan-payoff-chart'] svg path[data-series='original']"
     assert_selector "[data-controller='loan-payoff-chart'] svg path[data-series='projected']"
   end

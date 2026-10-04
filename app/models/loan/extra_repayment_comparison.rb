@@ -57,12 +57,21 @@ class Loan
       )
     end
 
-    # True when the current repayment never clears the loan, so there is no
-    # baseline to draw; the tab says so instead of showing an empty chart.
-    def baseline_does_not_converge?
-      loan.amortization_schedule.amortizable? &&
-        baseline.current_balance.amount.positive? &&
-        !baseline.converged?
+    # When the current repayment never clears the loan there is no baseline
+    # to chart, so the tab explains instead. Which explanation depends on the
+    # amount: none entered yet, one that clears the loan, or one that still
+    # doesn't. nil when the baseline converges and the chart is drawn.
+    def non_convergence_notice
+      return nil unless baseline_does_not_converge?
+      return :enter_amount if amount.nil?
+      extra_applicable? ? :cleared_by_extra : :not_cleared_by_extra
     end
+
+    private
+      def baseline_does_not_converge?
+        loan.amortization_schedule.amortizable? &&
+          baseline.current_balance.amount.positive? &&
+          !baseline.converged?
+      end
   end
 end
