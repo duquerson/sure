@@ -475,6 +475,24 @@ class PortfoliosControllerTest < ActionDispatch::IntegrationTest
       message: "no month netted negative, so the legend has nothing to name"
   end
 
+  # A "Fee" rebate is a :fee with a negative amount (Portfolio::FlowClassifier),
+  # so a period whose rebates exceed its charges sums to a negative fee. That is
+  # a real figure, and hiding it would say the period cost nothing.
+  test "the income section shows a net fee rebate" do
+    Portfolio::Performance.any_instance.stubs(:income).returns(
+      buckets: [ { month: Date.new(2026, 3, 1), amount: BigDecimal("42.5") } ],
+      total: BigDecimal("42.5"), fees: BigDecimal("-5"),
+      average_value: BigDecimal("2000"), fee_ratio: BigDecimal("-0.0025")
+    )
+
+    get portfolio_path
+
+    assert_response :success
+    assert_select "#portfolio-income p", text: I18n.t("portfolios.income.fees", period: Period.last_30_days.label)
+    assert_select "#portfolio-income p.privacy-sensitive",
+      text: /#{Regexp.escape(ApplicationController.helpers.format_money(Money.new(-5, "USD")))}/
+  end
+
   test "the income legend names reversals when a month netted negative" do
     Portfolio::Performance.any_instance.stubs(:income).returns(
       buckets: [ { month: Date.new(2026, 3, 1), amount: BigDecimal("-8") } ],
@@ -560,6 +578,8 @@ class PortfoliosControllerTest < ActionDispatch::IntegrationTest
       assert_select "[data-controller=bar-chart]", count: 0, message: "an empty chart says nothing a sentence cannot"
       assert_select "p", text: /#{Regexp.escape(I18n.t("portfolios.income.no_income", period: Period.last_30_days.label))}/
       assert_select "p", text: /%/, count: 0, message: "no fees, so no ratio"
+      assert_select "p", text: I18n.t("portfolios.income.fees", period: Period.last_30_days.label), count: 0,
+        message: "fees that net to zero have no line"
     end
   end
 

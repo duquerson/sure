@@ -74,10 +74,11 @@
   <% end %>
 
   <%# Fees are reported beside income and never netted into it. Shown only when
-      the period charged any; the ratio only when there was a value to divide
-      by (Portfolio::Income#fee_ratio is nil otherwise, which is "no ratio" and
-      not a ratio of zero). %>
-  <% if income[:fees].positive? %>
+      the period's fees net to anything: a net rebate is negative and is shown,
+      since hiding it would say the period cost nothing. The ratio only when
+      there was a value to divide by (Portfolio::Income#fee_ratio is nil
+      otherwise, which is "no ratio" and not a ratio of zero). %>
+  <% unless income[:fees].zero? %>
     <div class="px-4 flex flex-wrap items-baseline gap-x-3 gap-y-1">
       <p class="text-sm text-secondary"><%= t("portfolios.income.fees", period: period.label) %></p>
       <p class="text-sm font-medium tabular-nums privacy-sensitive text-primary">

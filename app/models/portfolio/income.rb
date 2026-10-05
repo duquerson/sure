@@ -40,9 +40,10 @@ class Portfolio::Income
     @total ||= rows.sum(BigDecimal(0), &:income)
   end
 
-  # A positive magnitude, as Portfolio::Drivers#fees is. A fee is not negative
-  # income: folding it into a bar would hide what a payout cost inside the
-  # payout.
+  # Charges are positive, as Portfolio::Drivers#fees is; a "Fee" rebate is a
+  # :fee with a negative amount (Portfolio::FlowClassifier), so a period whose
+  # rebates exceed its charges sums negative. A fee is not negative income:
+  # folding it into a bar would hide what a payout cost inside the payout.
   def fees
     @fees ||= rows.sum(BigDecimal(0), &:fees)
   end
