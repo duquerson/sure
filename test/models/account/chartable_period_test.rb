@@ -14,8 +14,14 @@ class Account::ChartablePeriodTest < ActiveSupport::TestCase
     assert_equal @family, Current.family, "the family context must be real, not assumed"
 
     @all_time = Period.from_key("all_time")
-    assert_equal @family.oldest_entry_date, @all_time.start_date,
-      "all_time must be genuinely family-scoped here, not the 5-year fallback"
+    # The family-scoped start anchors one month before the earliest
+    # Transaction/Trade (#300). dylan_family's fixtures include Transactions, so
+    # the anchor must come from them; asserting the exact value fails on a
+    # regression to the 5-year fallback or to oldest_entry_date alike.
+    family_activity = @family.earliest_activity_date
+    assert family_activity, "dylan_family must have a Transaction or Trade for this setup to mean anything"
+    assert_equal family_activity - 1.month, @all_time.start_date,
+      "all_time must be family-scoped to the earliest Transaction/Trade"
   end
 
   teardown do

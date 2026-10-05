@@ -9,6 +9,36 @@ class InvestmentStatementTest < ActiveSupport::TestCase
     @statement = InvestmentStatement.new(@family, user: nil)
   end
 
+  # #300 sentinel: `all_time_totals` reaches `Period.all_time`, whose anchor
+  # changed from "oldest entry of any kind" to "one month before the earliest
+  # Transaction or Trade". The family's only old entry here is a Valuation, so
+  # the anchor must come from the Trade. Pinning the range start is what makes
+  # this fail if the anchor widens back to the Valuation or drops to the 5-year
+  # guard; comparing totals alone could not, since the trade sits inside all
+  # three ranges.
+  test "total_contributions anchors all_time one month before the earliest Trade, ignoring an older Valuation" do
+    establish_family_context
+    account = family_account
+    account.entries.create!(
+      date: Date.new(2000, 8, 7), amount: 100_000, currency: "USD",
+      name: "Opening valuation", entryable: Valuation.new(kind: "opening_anchor")
+    )
+    trade_date = Date.new(2025, 3, 15)
+    security = create_portfolio_security
+    create_portfolio_trade(account: account, security: security, qty: 10, price: 50, date: trade_date, label: "Buy")
+
+    all_time = Period.all_time
+    assert_equal trade_date - 1.month, all_time.date_range.begin,
+      "all_time must anchor one month before the earliest Trade, ignoring the stray Valuation"
+    # total_contributions is the public reader over the private all_time_totals.
+    assert_equal @statement.totals(period: all_time).contributions.amount,
+                 @statement.total_contributions
+    assert_operator @statement.total_contributions, :>, 0,
+      "the trade must be counted, not excluded by the new anchor"
+  ensure
+    Current.session = nil
+  end
+
   test "portfolio_value and cash_balance with a single-currency family" do
     create_investment_account(balance: 1000, cash_balance: 100)
 
@@ -2281,6 +2311,14 @@ class InvestmentStatementTest < ActiveSupport::TestCase
   end
 
   private
+    def establish_family_context
+      Current.session = Session.create!(user: users(:empty))
+    end
+
+    def family_account
+      create_portfolio_account(@family)
+    end
+
     # A fund whose single constituent's ticker is listed on two exchanges, so
     # it cannot be resolved and is reported (#214).
     def add_colliding_fund(account, index)
