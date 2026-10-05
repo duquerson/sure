@@ -812,7 +812,7 @@ class LoanTest < ActiveSupport::TestCase
     loan = family.accounts.create!(
       name: "Unknown Offset Loan", balance: 250_000, currency: "USD",
       accountable: Loan.new(rate_type: "variable", interest_rate: 5, term_months: 240)
-    )
+    ).loan
 
     assert_no_difference "LoanOffsetAccount.count" do
       refute loan.update(offset_account_ids: [ SecureRandom.uuid ]),
