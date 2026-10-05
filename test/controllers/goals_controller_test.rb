@@ -276,7 +276,7 @@ class GoalsControllerTest < ActionDispatch::IntegrationTest
       goal: { name: "Discipline goal", target_amount: "1000", progress_basis: "contributions", account_ids: [ account.id ] }
     }
 
-    goal = Goal.order(created_at: :desc).first
+    goal = @user.family.goals.find_by!(name: "Discipline goal")
     assert_redirected_to goal_path(goal)
     assert_equal "contributions", goal.progress_basis
   end
@@ -286,7 +286,9 @@ class GoalsControllerTest < ActionDispatch::IntegrationTest
 
     post goals_url, params: { goal: { name: "Plain goal", target_amount: "1000", account_ids: [ account.id ] } }
 
-    assert_equal "balance", Goal.order(created_at: :desc).first.progress_basis
+    goal = @user.family.goals.find_by!(name: "Plain goal")
+    assert_redirected_to goal_path(goal)
+    assert_equal "balance", goal.progress_basis
   end
 
   test "update changes the progress basis" do
