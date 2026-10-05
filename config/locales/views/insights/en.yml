@@ -37,6 +37,7 @@ en:
       maintained_goal_depleted: Reserve
       spending_pace: Spending pace
       top_movers: Biggest changes
+      stale_valuation: Valuation
     meta:
       next_n_days:
         one: Next day
@@ -59,6 +60,9 @@ en:
       idle_days:
         one: idle %{count} day
         other: idle %{count} days
+      days_unvalued:
+        one: "unvalued %{count} day"
+        other: "unvalued %{count} days"
     actions:
       spending_anomaly: View %{category} transactions
       cash_flow_warning: Review recurring transactions
@@ -70,6 +74,7 @@ en:
       maintained_goal_depleted: View reserve
       spending_pace: See your spending story
       top_movers: See your spending story
+      stale_valuation: Update value
     titles:
       spending_anomaly:
         above: "%{category} spending is trending up"
@@ -94,6 +99,7 @@ en:
       top_movers:
         up: "%{category} rose the most in your spending"
         down: "%{category} fell the most in your spending"
+      stale_valuation: "%{account} needs a new value"
     templates:
       spending_anomaly:
         above: You're on pace to spend %{projected_spend} on %{category} this month, about %{deviation_pct}% more than your recent monthly average of %{baseline_spend}.
@@ -119,3 +125,4 @@ en:
       top_movers:
         up: Spending rose most in %{categories} compared with the previous %{days} days, with the biggest increase at %{top_change}.
         down: Spending fell most in %{categories} compared with the previous %{days} days, with the biggest decrease at %{top_change}.
+      stale_valuation: "%{account} was last valued on %{last_valued_on} and still counts as %{balance} in your net worth."

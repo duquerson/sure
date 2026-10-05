@@ -14,6 +14,7 @@ class AccountShare < ApplicationRecord
 
   after_commit :invalidate_loan_offset_links_on_create, on: :create
   after_commit :invalidate_loan_offset_links_on_destroy, on: :destroy
+  after_commit :expire_stale_valuation_insights, on: :destroy
 
   scope :with_permission, ->(permission) { where(permission: permission) }
 
@@ -47,6 +48,10 @@ class AccountShare < ApplicationRecord
 
     def invalidate_loan_offset_links_on_destroy
       LoanOffsetAccount.invalidate_for_sharing_change!(account)
+    end
+
+    def expire_stale_valuation_insights
+      Insight.expire_stale_valuation_for!(account) if account
     end
 
     def cannot_share_with_owner
