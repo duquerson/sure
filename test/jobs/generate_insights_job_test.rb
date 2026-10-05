@@ -236,6 +236,8 @@ class GenerateInsightsJobTest < ActiveJob::TestCase
       entryable: Valuation.new(kind: "reconciliation")
     )
     property.update_columns(created_at: 91.days.ago)
+    # The nudge is family-wide, so it only names accounts every member can see.
+    property.share_with!(users(:family_member), permission: "read_only")
     [ accounts(:vehicle), accounts(:other_asset), accounts(:other_liability) ].each do |account|
       account.entries.create!(
         name: "Fresh", date: Date.current, amount: account.balance, currency: "USD",
