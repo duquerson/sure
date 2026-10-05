@@ -81,7 +81,7 @@ class GoalPledgeTest < ActiveSupport::TestCase
   end
 
   test "matches? still takes a transfer into a crypto account" do
-    wallet, pledge = crypto_pledge
+    wallet, pledge = crypto_pledge(kind: "transfer")
     entry = build_entry(account: wallet, amount: -200, date: pledge.created_at.to_date)
     assert pledge.matches?(entry)
   end
@@ -174,12 +174,12 @@ class GoalPledgeTest < ActiveSupport::TestCase
   end
 
   private
-    # A manual_save pledge on a manual wallet: the kind a positive valuation
-    # delta would otherwise be allowed to satisfy.
-    def crypto_pledge
+    # A pledge on a manual wallet. manual_save is the kind a positive
+    # valuation delta would otherwise be allowed to satisfy.
+    def crypto_pledge(kind: "manual_save")
       wallet = Account.create!(family: @goal.family, accountable: Crypto.new, name: "Pledge wallet", currency: "USD", balance: 1_000)
       @goal.goal_accounts.create!(account: wallet, allocated_amount: 100)
-      pledge = @goal.goal_pledges.create!(account: wallet, amount: 200, kind: "manual_save")
+      pledge = @goal.goal_pledges.create!(account: wallet, amount: 200, kind: kind)
       [ wallet, pledge ]
     end
 
