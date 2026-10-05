@@ -490,7 +490,7 @@ class HoldingTest < ActiveSupport::TestCase
       amount: 0.0,
       currency: "USD"
     )
-    target.update_columns(qty: -22, amount: -3100.0)
+    target.update_columns(qty: -22, amount: -4000.0)
 
     amzn_security = @amzn.security
     initial_count = @account.holdings.count
@@ -506,6 +506,8 @@ class HoldingTest < ActiveSupport::TestCase
     # Merged quantity absorbed the moved row's 15, target kept the -22 -> net -7
     # (still negative, which the old save!/update! rejected).
     assert_equal BigDecimal("-7"), target.qty
+    # -4000 + the moved row's 3240 -> -760: the merged amount is negative too.
+    assert_equal BigDecimal("-760"), target.amount
     assert target.security_locked?, "merged row should be locked"
   end
 

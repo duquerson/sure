@@ -179,8 +179,10 @@ class HoldingsControllerTest < ActionDispatch::IntegrationTest
     trades_before = @account.trades.where(security_id: old_security_id).count
     Balance::Materializer.any_instance.stubs(:materialize_balances).raises(StandardError, "forced test failure")
 
-    assert_no_difference -> { Security.count } do
-      patch remap_security_holding_path(@holding), params: { security_id: "NEWREMAP|XNAS" }
+    assert_error_reported(StandardError) do
+      assert_no_difference -> { Security.count } do
+        patch remap_security_holding_path(@holding), params: { security_id: "NEWREMAP|XNAS" }
+      end
     end
 
     assert_redirected_to account_path(@holding.account, tab: "holdings")
@@ -217,14 +219,15 @@ class HoldingsControllerTest < ActionDispatch::IntegrationTest
     trades_on_remapped = @account.trades.where(security: remapped).count
     assert_operator trades_on_remapped, :>, 0
 
-    Holding.any_instance.stubs(:update_columns).raises(ActiveRecord::StatementInvalid, "forced test failure")
+    Holding.any_instance.expects(:update_columns).at_least_once.raises(ActiveRecord::StatementInvalid, "forced test failure")
 
-    post reset_security_holding_path(@holding)
+    assert_error_reported(ActiveRecord::StatementInvalid) do
+      post reset_security_holding_path(@holding)
+    end
 
     assert_redirected_to account_path(@holding.account, tab: "holdings")
     assert_equal I18n.t("holdings.reset_security.failed"), flash[:alert]
     assert_nil flash[:notice]
-    Holding.any_instance.unstub(:update_columns)
     assert_equal remapped.id, @holding.reload.security_id
     assert_equal trades_on_remapped, @account.trades.where(security: remapped).count
   end

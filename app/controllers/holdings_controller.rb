@@ -172,6 +172,7 @@ class HoldingsController < ApplicationController
       # A failure reaches the user as a flash alert on the redirect, not a 500
       # error response. The transaction above has rolled everything back.
       Rails.logger.warn("remap_security failed for holding #{@holding.id}: #{e.class}: #{e.message}")
+      Rails.error.report(e, handled: true, context: { holding_id: @holding.id, action: "remap_security" })
       flash[:alert] = t(".failed")
       redirect_to account_path(@holding.account, tab: "holdings")
       return
@@ -231,6 +232,7 @@ class HoldingsController < ApplicationController
       # error response. reset_security_to_provider! writes inside one
       # transaction, which has rolled the reset back.
       Rails.logger.warn("reset_security failed for holding #{@holding.id}: #{e.class}: #{e.message}")
+      Rails.error.report(e, handled: true, context: { holding_id: @holding.id, action: "reset_security" })
       flash[:alert] = t(".failed")
       redirect_to account_path(@holding.account, tab: "holdings")
       return
