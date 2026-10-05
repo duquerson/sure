@@ -148,4 +148,52 @@ class HoldingsControllerTest < ActionDispatch::IntegrationTest
     assert_redirected_to account_path(@holding.account, tab: "holdings")
     assert_equal "Yahoo Finance rate limit exceeded", flash[:alert]
   end
+
+  # #301 — a remap whose negative-amount row the old save!/update! rejected
+  # must now succeed and reach the user as a success notice (not an error).
+  test "remap_security on a negative-amount holding redirects with success notice" do
+    # Force the holding into the materializer-produced negative state (upsert_all
+    # bypasses the >=0 validation), which the old model code raised on.
+    @holding.update_columns(qty: -22, amount: BigDecimal("-3187.80"))
+
+    msft = securities(:msft)
+    Balance::Materializer.any_instance.stubs(:materialize_balances)
+
+    patch remap_security_holding_path(@holding), params: { security_id: "MSFT|XNAS" }
+
+    assert_redirected_to account_path(@holding.account, tab: "holdings")
+    assert_equal I18n.t("holdings.remap_security.success"), flash[:notice]
+    assert_nil flash[:alert]
+    @holding.reload
+    assert_equal msft.id, @holding.security_id
+    assert @holding.security_locked?
+  end
+
+  # #301 — a remap failure (anything raising inside the begin block) must be
+  # surfaced as a flash alert on the redirect, NOT as a 500 error response.
+  test "remap_security surfaces a failure as a flash alert, not an error response" do
+    # set_holding re-queries a fresh instance, so stub at the class level.
+    Holding.any_instance.stubs(:remap_security!).raises(StandardError, "forced test failure")
+
+    patch remap_security_holding_path(@holding), params: { security_id: "MSFT|XNAS" }
+
+    # The transaction has rolled the remap back; the user is redirected (302)
+    # with a real message rather than an exception bubbling into a 500.
+    assert_response :redirect
+    assert_redirected_to account_path(@holding.account, tab: "holdings")
+    assert_equal I18n.t("holdings.remap_security.failed"), flash[:alert]
+    assert_nil flash[:notice]
+  end
+
+  # #301 — reset_security gets the same alert-not-error treatment.
+  test "reset_security surfaces a failure as a flash alert, not an error response" do
+    Holding.any_instance.stubs(:reset_security_to_provider!).raises(StandardError, "forced test failure")
+
+    post reset_security_holding_path(@holding)
+
+    assert_response :redirect
+    assert_redirected_to account_path(@holding.account, tab: "holdings")
+    assert_equal I18n.t("holdings.reset_security.failed"), flash[:alert]
+    assert_nil flash[:notice]
+  end
 end
