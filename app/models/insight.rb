@@ -29,6 +29,7 @@ class Insight < ApplicationRecord
     maintained_goal_depleted
     spending_pace
     top_movers
+    stale_valuation
   ].freeze
 
   # How many the dashboard widget shows. Shared so PagesController (first render)
@@ -50,6 +51,17 @@ class Insight < ApplicationRecord
     order(Arel.sql("CASE insights.priority WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END"))
       .order(generated_at: :desc)
   }
+
+  # A stale-valuation card names its account and balance to the whole family,
+  # so it is generated only while every member can see the account. When a
+  # share is removed that stops being true at once, not at the next nightly
+  # run, so the card is expired here.
+  def self.expire_stale_valuation_for!(account)
+    where(family_id: account.family_id, insight_type: "stale_valuation")
+      .visible
+      .where("metadata->>'account_id' = ?", account.id.to_s)
+      .update_all(status: "expired", updated_at: Time.current)
+  end
 
   def mark_read!
     return unless active?

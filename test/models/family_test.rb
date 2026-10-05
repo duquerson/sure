@@ -7,6 +7,16 @@ class FamilyTest < ActiveSupport::TestCase
     @syncable = families(:dylan_family)
   end
 
+  test "stale_valuation_days accepts the whole 1..3650 range and nothing outside it" do
+    family = families(:dylan_family)
+
+    assert_equal 90, family.stale_valuation_days
+    [ 1, 3650 ].each { |days| assert family.tap { |f| f.stale_valuation_days = days }.valid?, "#{days} should be valid" }
+    [ 0, -5, 3651 ].each { |days| assert_not family.tap { |f| f.stale_valuation_days = days }.valid?, "#{days} should be invalid" }
+    assert_not family.tap { |f| f.stale_valuation_days = 30.5 }.valid?
+    assert_not family.tap { |f| f.stale_valuation_days = nil }.valid?
+  end
+
   test "investment_contributions_category creates category when missing" do
     family = families(:dylan_family)
     family.categories.where(name: Category.investment_contributions_name).destroy_all
@@ -638,6 +648,81 @@ class FamilyTest < ActiveSupport::TestCase
     Provider::Registry.stubs(:get_provider).with(:jev).raises(ArgumentError, "boom")
 
     assert_raises(ArgumentError) { family.resolved_categorization_provider }
+  end
+
+  test "earliest_activity_date returns the earliest Transaction date in the family" do
+    family = families(:dylan_family)
+
+    transaction_date = 4.years.ago.to_date
+    account = family.accounts.first
+    account.entries.create!(
+      date: transaction_date,
+      amount: 125,
+      currency: account.currency,
+      name: "Older transaction #{SecureRandom.hex(3)}",
+      entryable: Transaction.new,
+    )
+
+    assert_equal transaction_date, family.earliest_activity_date
+  end
+
+  test "earliest_activity_date honors a Trade earlier than every Transaction" do
+    family = families(:dylan_family)
+
+    account = family.accounts.first
+    trade_date = 7.years.ago.to_date
+    trade = Trade.new(qty: 1, price: 100, currency: account.currency, security: securities(:aapl))
+    account.entries.create!(
+      date: trade_date,
+      amount: 100,
+      currency: account.currency,
+      name: "Older trade #{SecureRandom.hex(3)}",
+      entryable: trade,
+    )
+
+    assert_equal trade_date, family.earliest_activity_date
+  end
+
+  test "earliest_activity_date ignores Valuations of every kind" do
+    # Fresh family: dylan's fixture already carries a Trade entry, which would
+    # legitimately be the earliest activity and make this assertion fail.
+    family = Family.create!(
+      name: "Valuations only #{SecureRandom.hex(3)}",
+      currency: "USD"
+    )
+    account = family.accounts.create!(
+      name: "Property #{SecureRandom.hex(3)}",
+      balance: 100_000,
+      currency: "USD",
+      accountable: Property.new
+    )
+    older_valuation_date = 8.years.ago.to_date
+    account.entries.create!(
+      date: older_valuation_date,
+      amount: 100_000,
+      currency: "USD",
+      name: "Opening valuation",
+      entryable: Valuation.new(kind: "opening_anchor"),
+    )
+    account.entries.create!(
+      date: 1.month.ago.to_date,
+      amount: 110_000,
+      currency: "USD",
+      name: "Later valuation",
+      entryable: Valuation.new,
+    )
+
+    assert_nil family.earliest_activity_date,
+      "a Valuation is not activity, whatever entryable type it carries"
+  end
+
+  test "earliest_activity_date returns nil when the family has no entries" do
+    family = Family.create!(
+      name: "No activity #{SecureRandom.hex(3)}",
+      currency: "USD"
+    )
+
+    assert_nil family.earliest_activity_date
   end
 
   private
