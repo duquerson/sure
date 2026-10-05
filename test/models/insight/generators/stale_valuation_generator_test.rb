@@ -8,6 +8,12 @@ class Insight::Generators::StaleValuationGeneratorTest < ActiveSupport::TestCase
     # the one state the generator must say nothing about. Every test sets the
     # age it is exercising explicitly rather than leaning on that default.
     [ accounts(:other_asset), accounts(:other_liability), accounts(:vehicle) ].each { |a| settle(a) }
+    # Insights are family-wide, so the generator only speaks about accounts every
+    # member can see. The fixture accounts are private to their owner; share them
+    # so each test exercises the age rule it names, not the visibility rule.
+    [ @property, accounts(:other_asset), accounts(:other_liability), accounts(:vehicle) ].each do |account|
+      account.share_with!(users(:family_member), permission: "read_only")
+    end
   end
 
   test "flags a manual property last valued 91 days ago" do
@@ -22,6 +28,42 @@ class Insight::Generators::StaleValuationGeneratorTest < ActiveSupport::TestCase
     assert_equal @property.id, insight.metadata[:account_id]
     assert_equal 91.days.ago.to_date.iso8601, insight.metadata[:last_valued_on]
     assert_not_includes insight.facts.keys, :days
+  end
+
+  test "says nothing about an account a member cannot see" do
+    value_on(@property, 91.days.ago.to_date)
+    assert_equal [ @property.id ], generate.map { |i| i.metadata[:account_id] }
+
+    @property.unshare_with!(users(:family_member))
+
+    assert_empty generate
+  end
+
+  test "a read-only share is enough for the account to be nudged" do
+    value_on(@property, 91.days.ago.to_date)
+    @property.account_shares.update_all(permission: "read_only")
+
+    assert_equal [ @property.id ], generate.map { |i| i.metadata[:account_id] }
+  end
+
+  test "a deactivated member does not hide an account they were never shared" do
+    value_on(@property, 91.days.ago.to_date)
+    @property.unshare_with!(users(:family_member))
+    assert_empty generate
+
+    users(:family_member).update_columns(active: false)
+
+    assert_equal [ @property.id ], generate.map { |i| i.metadata[:account_id] }
+  end
+
+  test "a hidden account does not take one of the three places" do
+    hidden = accounts(:other_asset)
+    value_on(hidden, 200.days.ago.to_date)
+    hidden.unshare_with!(users(:family_member))
+    [ @property, accounts(:other_liability), accounts(:vehicle) ].each { |a| value_on(a, 120.days.ago.to_date) }
+
+    assert_equal [ @property, accounts(:other_liability), accounts(:vehicle) ].map(&:id).sort,
+                 generate.map { |i| i.metadata[:account_id] }.sort
   end
 
   test "says nothing at exactly the threshold" do

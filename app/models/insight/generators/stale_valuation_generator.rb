@@ -42,7 +42,9 @@ class Insight::Generators::StaleValuationGenerator < Insight::Generator
     def stale_accounts(today)
       cutoff = today - family.stale_valuation_days
 
-      candidates = family.accounts.where(status: "active").manual.where(accountable_type: MANUALLY_VALUED_TYPES).to_a
+      candidates = family.accounts.where(status: "active").manual.where(accountable_type: MANUALLY_VALUED_TYPES)
+        .includes(:account_shares).to_a
+        .select { |account| visible_to_every_member?(account) }
       latest_valuation_dates = Entry.where(account_id: candidates.map(&:id), entryable_type: "Valuation")
         .group(:account_id).maximum(:date)
 
@@ -50,6 +52,19 @@ class Insight::Generators::StaleValuationGenerator < Insight::Generator
         .map { |account| [ account, last_valued_on(account, latest_valuation_dates[account.id]) ] }
         .select { |_account, last_valued_on| last_valued_on < cutoff }
         .sort_by { |account, last_valued_on| [ last_valued_on, account.id ] }
+    end
+
+    # Insights are family-wide: every member reads the same card, and its facts
+    # carry the account's name and balance. So an account is nudged only when
+    # every active member can already see it, as owner or through any share.
+    # Deactivated users cannot sign in, so they hide nothing.
+    def visible_to_every_member?(account)
+      viewers = account.account_shares.map(&:user_id) << account.owner_id
+      (member_ids - viewers).empty?
+    end
+
+    def member_ids
+      @member_ids ||= family.users.where(active: true).pluck(:id)
     end
 
     # The newest valuation, floored at the day the account was created. Opening
