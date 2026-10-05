@@ -209,29 +209,51 @@ class LoansControllerTest < ActionDispatch::IntegrationTest
     offset = @account.family.accounts.create!(
       name: "New offset", balance: 12_500, currency: @account.currency, accountable: Depository.new
     )
+    # Visible to the whole family, as the new loan will be: a family that shares
+    # by default shares the loan with everyone (#290).
+    offset.auto_share_with_family!
 
-    post loans_path, params: {
-      account: {
-        name: "Variable Loan",
-        balance: 50_000,
-        currency: @account.currency,
-        accountable_type: "Loan",
-        accountable_attributes: {
-          subtype: "mortgage",
-          interest_rate: 5.5,
-          term_months: 60,
-          rate_type: "variable",
-          initial_balance: 50_000,
-          offset_account_ids: [ offset.id ]
-        }
-      }
-    }
+    assert_difference -> { Account.where(accountable_type: "Loan").count }, 1 do
+      post loans_path, params: { account: variable_loan_params(currency: @account.currency, offset_ids: [ offset.id ]) }
+    end
 
-    created_loan = Account.order(:created_at).last.accountable
+    created_loan = Account.where(accountable_type: "Loan").order(:created_at).last.accountable
 
     assert_equal "variable", created_loan.rate_type
     assert_equal [ offset.id ], created_loan.offset_accounts.pluck(:id)
     assert_redirected_to created_loan.account
+  end
+
+  # --- #290: offsets submitted with a new loan --------------------------------
+
+  test "refuses a new loan whose offset is in another currency" do
+    euro = @account.family.accounts.create!(
+      name: "Euro offset", balance: 12_500, currency: "EUR", accountable: Depository.new
+    )
+    euro.auto_share_with_family!
+    assert_not_equal "EUR", @account.currency, "precondition"
+
+    assert_no_difference [ -> { Account.count }, -> { LoanOffsetAccount.count } ] do
+      post loans_path, params: { account: variable_loan_params(currency: @account.currency, offset_ids: [ euro.id ]) }
+    end
+
+    assert_response :unprocessable_entity
+    assert_match "must use the same currency as the loan", response.body
+  end
+
+  test "refuses a new loan whose offset the rest of the family cannot see" do
+    private_offset = @account.family.accounts.create!(
+      name: "Private offset", balance: 12_500, currency: @account.currency, accountable: Depository.new
+    )
+    assert @account.family.share_all_by_default?, "precondition"
+    assert_empty private_offset.account_shares, "precondition"
+
+    assert_no_difference [ -> { Account.count }, -> { LoanOffsetAccount.count } ] do
+      post loans_path, params: { account: variable_loan_params(currency: @account.currency, offset_ids: [ private_offset.id ]) }
+    end
+
+    assert_response :unprocessable_entity
+    assert_match "must be visible to every loan viewer", response.body
   end
 
   # --- #129 collateral link --------------------------------------------------
@@ -521,4 +543,22 @@ class LoansControllerTest < ActionDispatch::IntegrationTest
         "a #{rate_type} loan must keep the offset accounts submitted with it"
     end
   end
+
+  private
+    def variable_loan_params(currency:, offset_ids:)
+      {
+        name: "Variable Loan",
+        balance: 50_000,
+        currency: currency,
+        accountable_type: "Loan",
+        accountable_attributes: {
+          subtype: "mortgage",
+          interest_rate: 5.5,
+          term_months: 60,
+          rate_type: "variable",
+          initial_balance: 50_000,
+          offset_account_ids: offset_ids
+        }
+      }
+    end
 end

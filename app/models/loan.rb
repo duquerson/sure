@@ -138,6 +138,17 @@ class Loan < ApplicationRecord
     amortization_schedule.monthly_payment
   end
 
+  # Everyone who can see the loan's account, or will once it is saved: the rule
+  # behind both the collateral and the offset links.
+  def self.viewers_of(loan_account)
+    users = loan_account.family.users
+    # A new account in a family that shares by default is visible to everyone in
+    # it the moment it exists, but its shares are written after validation.
+    return users.to_a if loan_account.new_record? && loan_account.family.share_all_by_default?
+
+    users.select { |user| loan_account.shared_with?(user) }
+  end
+
   # The account this loan is being saved through, when it is. `loan.account` is
   # read from the database (and is nil for a loan being created), so on a save
   # through the account it describes the account as it WAS: a request that changes
@@ -857,16 +868,11 @@ class Loan < ApplicationRecord
       collateral_problems.each { |problem| errors.add(:collateral_account, problem) }
     end
 
-    # Everyone who can see the loan's account. Mirrors LoanOffsetAccount's rule
-    # (`account_is_visible_to_every_loan_viewer`): a link the loan's viewers could
-    # not follow would show them a figure from an account they cannot see.
+    # The collateral link answers to the same viewers as an offset link: a link
+    # the loan's viewers could not follow would show them a figure from an account
+    # they cannot see.
     def collateral_viewers(loan_account)
-      users = loan_account.family.users
-      # A new account in a family that shares by default is visible to everyone in
-      # it the moment it exists, but its shares are written after validation.
-      return users.to_a if loan_account.new_record? && loan_account.family.share_all_by_default?
-
-      users.select { |user| loan_account.shared_with?(user) }
+      Loan.viewers_of(loan_account)
     end
 
     def validate_offset_accounts

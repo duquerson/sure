@@ -67,12 +67,17 @@ class LoanOffsetAccount < ApplicationRecord
       errors.add(:account, "must be visible to every loan viewer (missing: #{names})")
     end
 
+    # The loan's account as it is being saved, not `loan.account`: that is nil
+    # while a new loan validates and links its offsets, and the stored currency
+    # on an edit, so these checks used to skip or read the old currency (#290).
+    # The link reaches the loan through the association's inverse, so it is the
+    # same instance Account handed itself to.
     def loan_account
-      loan&.account
+      loan&.owning_account
     end
 
     def loan_viewers
-      loan_account.family.users.select { |user| loan_account.shared_with?(user) }
+      Loan.viewers_of(loan_account)
     end
 
     def clear_loan_projection_cache

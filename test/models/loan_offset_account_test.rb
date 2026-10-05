@@ -107,4 +107,114 @@ class LoanOffsetAccountTest < ActiveSupport::TestCase
     @loan.loan_offset_accounts.delete_all
     assert_empty @loan.reload.offset_accounts
   end
+
+  # --- #290: a loan being created ------------------------------------------
+  #
+  # `loan.account` is nil while a new loan validates and while its after_save
+  # links the offsets, so every check that needs the loan's account used to
+  # return early on exactly this path.
+
+  test "a new loan links an offset in its currency that the family can see" do
+    family = @loan.account.family
+    @offset.auto_share_with_family!
+
+    created = create_loan_on(family, offset: @offset)
+
+    assert_equal [ @offset.id ], created.loan.offset_accounts.pluck(:id)
+  end
+
+  test "a new loan refuses an offset in another currency" do
+    family = @loan.account.family
+    euro = family.accounts.create!(name: "Euro offset", balance: 100, currency: "EUR", accountable: Depository.new)
+    euro.auto_share_with_family!
+
+    assert_no_difference [ -> { family.accounts.count }, -> { LoanOffsetAccount.count } ] do
+      error = assert_raises(ActiveRecord::RecordInvalid) { create_loan_on(family, offset: euro) }
+      assert_match "must use the same currency as the loan", error.message
+    end
+  end
+
+  # A new account in a family that shares by default is visible to everyone in it
+  # the moment it exists, but its shares are written after validation. Judged
+  # against its owner alone, a private offset would pass and then be linked from
+  # a loan the whole family can see.
+  test "a new loan the family will share refuses a private offset" do
+    family = @loan.account.family
+    assert family.share_all_by_default?, "precondition"
+    assert_not_equal [], family.users.where.not(id: @offset.owner_id).to_a, "precondition"
+    assert_empty @offset.account_shares, "precondition"
+
+    assert_no_difference [ -> { family.accounts.count }, -> { LoanOffsetAccount.count } ] do
+      error = assert_raises(ActiveRecord::RecordInvalid) { create_loan_on(family, offset: @offset) }
+      assert_match "must be visible to every loan viewer", error.message
+    end
+  end
+
+  test "a new loan in a family that does not share by default only needs its owner to see the offset" do
+    family = @loan.account.family
+    family.update!(default_account_sharing: "private")
+    assert_empty @offset.account_shares, "precondition"
+
+    created = create_loan_on(family, offset: @offset)
+
+    assert_equal [ @offset.id ], created.loan.offset_accounts.pluck(:id)
+  end
+
+  # `loan.account` is the account as stored, so an edit that changes the
+  # currency and the offsets together used to be judged on the old currency.
+  # The edit also changes a loan column: a nested save skips a loan whose
+  # columns are unchanged, which is a separate defect (see the PR).
+  test "an edit that changes the currency is judged on the new currency" do
+    account = Account.find(@loan.account.id)
+    @offset.auto_share_with_family!
+    assert_equal "fixed", @loan.rate_type, "precondition"
+
+    saved = account.update(
+      currency: "EUR",
+      accountable_attributes: { id: @loan.id, rate_type: "variable", offset_account_ids: [ @offset.id ] }
+    )
+
+    assert_not saved
+    assert_match "must use the same currency as the loan", account.errors.full_messages.to_sentence
+    assert_equal "USD", account.reload.currency
+    assert_empty @loan.reload.offset_accounts
+  end
+
+  # The same for an offset the loan already has: its existing join row is the
+  # one validated, and it read the loan's stored account.
+  test "an edit that changes the currency is judged on the new currency for a kept offset" do
+    @offset.auto_share_with_family!
+    @loan.update!(rate_type: "variable", offset_account_ids: [ @offset.id ])
+    assert_equal [ @offset.id ], @loan.reload.offset_accounts.pluck(:id), "precondition"
+    account = Account.find(@loan.account.id)
+
+    saved = account.update(
+      currency: "EUR",
+      accountable_attributes: { id: @loan.id, interest_rate: 4.25, offset_account_ids: [ @offset.id ] }
+    )
+
+    assert_not saved
+    assert_match "must use the same currency as the loan", account.errors.full_messages.to_sentence
+    assert_equal "USD", account.reload.currency
+  end
+
+  test "an edit in the loan's own currency still keeps its offset" do
+    @offset.auto_share_with_family!
+    @loan.update!(rate_type: "variable", offset_account_ids: [ @offset.id ])
+    account = Account.find(@loan.account.id)
+
+    saved = account.update(accountable_attributes: { id: @loan.id, interest_rate: 4.25, offset_account_ids: [ @offset.id ] })
+
+    assert saved, account.errors.full_messages.to_sentence
+    assert_equal [ @offset.id ], @loan.reload.offset_accounts.pluck(:id)
+  end
+
+  private
+    def create_loan_on(family, offset:)
+      family.accounts.create_and_sync(
+        { name: "New loan", balance: 1_000, currency: "USD", owner: users(:family_admin),
+          accountable_type: "Loan",
+          accountable_attributes: { rate_type: "variable", offset_account_ids: [ offset.id ] } }
+      )
+    end
 end
