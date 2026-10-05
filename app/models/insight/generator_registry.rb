@@ -13,6 +13,8 @@ class Insight::GeneratorRegistry
     Insight::Generators::IdleCashGenerator,
     Insight::Generators::BudgetInsightGenerator,
     Insight::Generators::MaintainedGoalDepletedGenerator,
+    Insight::Generators::SpendingPaceGenerator,
+    Insight::Generators::TopMoversGenerator,
     Insight::Generators::StaleValuationGenerator
   ].freeze
 
