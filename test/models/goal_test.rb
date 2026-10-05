@@ -144,13 +144,29 @@ class GoalTest < ActiveSupport::TestCase
     assert_match(/at least one/i, new_goal.errors[:base].join)
   end
 
-  test "investment accounts are fundable and default to the contributions basis" do
+  # #299: a new goal counts what its accounts are worth today unless the user
+  # chose otherwise, whatever kind of account backs it.
+  test "investment accounts are fundable and a new goal defaults to the market value basis" do
     investment = accounts(:investment)
     new_goal = @family.goals.new(name: "Inv", target_amount: 100, currency: "USD")
     new_goal.goal_accounts.build(account: investment)
     assert new_goal.valid?, new_goal.errors.full_messages.to_sentence
-    new_goal.save! # basis is set on save (before_save), not on valid?
-    assert_equal "contributions", new_goal.progress_basis
+    new_goal.save!
+    assert_equal "balance", new_goal.reload.progress_basis
+  end
+
+  test "a new investment-backed goal keeps the contributions basis it was given" do
+    new_goal = @family.goals.create!(name: "Inv", target_amount: 100, currency: "USD", progress_basis: "contributions") do |g|
+      g.goal_accounts.build(account: accounts(:investment))
+    end
+    assert_equal "contributions", new_goal.reload.progress_basis
+  end
+
+  test "an unknown progress basis is rejected" do
+    goal = goals(:emergency_fund)
+    goal.progress_basis = "speculative"
+    assert_not goal.valid?
+    assert goal.errors[:progress_basis].any?
   end
 
   test "non-fundable account types are rejected" do
@@ -866,7 +882,7 @@ class GoalTest < ActiveSupport::TestCase
   test "contributions basis excludes market gains" do
     account = Account.create!(family: @family, accountable: Investment.new, name: "Brokerage", currency: "USD", balance: 10_000)
     account.balances.create!(date: 10.days.ago.to_date, balance: 10_000, currency: "USD", net_market_flows: 3_000)
-    goal = @family.goals.create!(name: "Invest goal", target_amount: 20_000, currency: "USD") do |g|
+    goal = @family.goals.create!(name: "Invest goal", target_amount: 20_000, currency: "USD", progress_basis: "contributions") do |g|
       g.goal_accounts.build(account: account)
     end
     assert_equal "contributions", goal.progress_basis
@@ -887,18 +903,65 @@ class GoalTest < ActiveSupport::TestCase
     assert_equal "transfer", accounts(:investment).default_pledge_kind
   end
 
-  test "adding an investment account via update flips a depository goal to contributions" do
+  # #299: linking an account never re-bases a goal. Before, this flipped a
+  # balance goal to contributions, so an explicit choice of market value could
+  # not survive the next save.
+  test "adding an investment account via update keeps a balance goal on balance" do
     goal = goals(:emergency_fund)
     assert_equal "balance", goal.progress_basis
     goal.goal_accounts.build(account: accounts(:investment))
     goal.save!
+    assert_equal "balance", goal.reload.progress_basis
+  end
+
+  test "an explicit market value choice survives saving and linking another account" do
+    account = Account.create!(family: @family, accountable: Investment.new, name: "Brokerage M", currency: "USD", balance: 10_000)
+    goal = @family.goals.create!(name: "Deposit", target_amount: 20_000, currency: "USD", progress_basis: "balance") do |g|
+      g.goal_accounts.build(account: account)
+    end
+    goal.update!(name: "House deposit")
+    assert_equal "balance", goal.reload.progress_basis
+
+    goal.goal_accounts.build(account: accounts(:investment))
+    goal.save!
+    assert_equal "balance", goal.reload.progress_basis
+  end
+
+  test "a save does not re-base an existing contributions goal" do
+    goal = goals(:emergency_fund)
+    goal.update_columns(progress_basis: "contributions")
+    goal.update!(name: "Renamed fund")
     assert_equal "contributions", goal.reload.progress_basis
+  end
+
+  # Delta, not presence: the same goal read on each basis differs by exactly the
+  # account's recorded market gain, so a basis that silently stopped mattering
+  # (or a reader that ignored it) would show no difference.
+  test "switching basis moves the goal by exactly the market gain" do
+    account = Account.create!(family: @family, accountable: Investment.new, name: "Brokerage S", currency: "USD", balance: 10_000)
+    account.balances.create!(date: 10.days.ago.to_date, balance: 10_000, currency: "USD", net_market_flows: 3_000)
+    goal = @family.goals.create!(name: "Switch goal", target_amount: 20_000, currency: "USD") do |g|
+      g.goal_accounts.build(account: account)
+    end
+    # Read each figure off a fresh record: current_balance is memoised, and
+    # reload does not clear it.
+    on_market_value = Goal.find(goal.id).current_balance.to_d
+
+    goal.update!(progress_basis: "contributions")
+    on_contributions = Goal.find(goal.id).current_balance.to_d
+
+    goal.update!(progress_basis: "balance")
+    back_on_market_value = Goal.find(goal.id).current_balance.to_d
+
+    assert_equal BigDecimal("10000"), on_market_value
+    assert_equal BigDecimal("3000"), on_market_value - on_contributions
+    assert_equal on_market_value, back_on_market_value
   end
 
   test "earmark is respected on a contributions-basis goal" do
     account = Account.create!(family: @family, accountable: Investment.new, name: "Brokerage2", currency: "USD", balance: 10_000)
     account.balances.create!(date: 5.days.ago.to_date, balance: 10_000, currency: "USD", net_market_flows: 2_000)
-    goal = @family.goals.create!(name: "Earmarked invest", target_amount: 20_000, currency: "USD") do |g|
+    goal = @family.goals.create!(name: "Earmarked invest", target_amount: 20_000, currency: "USD", progress_basis: "contributions") do |g|
       g.goal_accounts.build(account: account, allocated_amount: 1_000)
     end
     assert_equal "contributions", goal.progress_basis

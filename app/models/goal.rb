@@ -34,9 +34,11 @@ class Goal < ApplicationRecord
   validates :name, presence: true, length: { maximum: 255 }
   validates :target_amount, presence: true, numericality: { greater_than: 0 }
   validates :currency, presence: true
-  # before_save (not before_validation) so it only mutates on persistence, not
-  # on every valid? call — a goal can be inspected without its basis flipping.
-  before_save :default_progress_basis_for_investment
+  # What progress counts: "balance" is what the linked accounts are worth
+  # today, "contributions" only what was put in (market gains taken out). The
+  # user chooses; nothing re-bases a goal behind their back (#299).
+  PROGRESS_BASES = %w[balance contributions].freeze
+  validates :progress_basis, inclusion: { in: PROGRESS_BASES }
   # A reserve measured in months is derived, not typed: computing it only in
   # the monthly job would leave a brand-new one wrong until the 1st, so the
   # feature's first impression would be its least convincing moment. Fired on
@@ -1327,16 +1329,6 @@ class Goal < ApplicationRecord
       return if offending.empty?
 
       errors.add(:linked_accounts, :must_be_fundable)
-    end
-
-    # Goals funded by an investment account default to the contributions basis
-    # (so a market swing doesn't move them); depository-only goals stay on the
-    # balance basis. Only auto-set when the basis is still the default.
-    def default_progress_basis_for_investment
-      return unless goal_accounts.any? { |ga| ga.account&.investment? }
-      return unless progress_basis.blank? || progress_basis == "balance"
-
-      self.progress_basis = "contributions"
     end
 
     def linked_accounts_must_match_goal_currency
