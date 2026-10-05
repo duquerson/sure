@@ -191,10 +191,13 @@ class UI::Account::ChartTest < ViewComponent::TestCase
   # the new anchor rather than being shadowed by it.
   test "all_time family anchor is clamped to the account's own start when it postdates it" do
     Current.session = Session.create!(user: users(:family_admin))
-    account_start = 10.days.ago.to_date
+    family_all_time = Period.from_key("all_time")
+    assert_family_anchor(family_all_time)
+    # Derived from the anchor rather than fixed, so fixture dates can't decide
+    # which side of it the account falls on.
+    account_start = family_all_time.start_date + 5.days
     @account.stubs(:history_start_date).returns(account_start)
 
-    family_all_time = Period.from_key("all_time")
     component = UI::Account::Chart.new(account: @account, period: family_all_time)
 
     assert_equal "all_time", component.period.key
@@ -210,10 +213,11 @@ class UI::Account::ChartTest < ViewComponent::TestCase
   # start rather than clamping back to the account's much earlier date.
   test "all_time family anchor is not clamped when the account history predates it" do
     Current.session = Session.create!(user: users(:family_admin))
-    account_start = 2.years.ago.to_date
+    family_all_time = Period.from_key("all_time")
+    assert_family_anchor(family_all_time)
+    account_start = family_all_time.start_date - 1.year
     @account.stubs(:history_start_date).returns(account_start)
 
-    family_all_time = Period.from_key("all_time")
     component = UI::Account::Chart.new(account: @account, period: family_all_time)
 
     assert_equal "all_time", component.period.key
@@ -224,6 +228,14 @@ class UI::Account::ChartTest < ViewComponent::TestCase
   end
 
   private
+    # The two #300 stacking tests are about the family anchor, so check they
+    # really got it rather than the 5-year fallback.
+    def assert_family_anchor(period)
+      activity = Current.family.earliest_activity_date
+      assert activity, "the family needs a Transaction or Trade for an anchor"
+      assert_equal activity - 1.month, period.start_date
+    end
+
     # 10 shares at $100 market price; gain = 1000 - cost_basis * 10
     def create_holding(cost_basis:)
       Holding.create!(

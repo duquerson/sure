@@ -78,14 +78,16 @@ class Period
     },
     "all_time" => {
       date_range: -> {
-        # Anchor to the first real activity (a Transaction or Trade), not to the
-        # oldest entry of any kind -- a stray Valuation or opening anchor dated
-        # far in the past would otherwise stretch every All chart into a long
-        # flat zero line (#300). Families with no transactions or trades fall
-        # back to oldest_entry_date, i.e. today's behaviour.
-        earliest_activity_date = Current.family&.earliest_activity_date
-        fallback_date = Current.family&.oldest_entry_date
-        start_date = earliest_activity_date && earliest_activity_date < Date.current ? earliest_activity_date - 1.month : fallback_date
+        # Anchor to one month before the first real activity (a Transaction or
+        # Trade), not to the oldest entry of any kind -- a stray Valuation or
+        # opening anchor dated far in the past would otherwise stretch every
+        # All chart into a long flat zero line (#300). Only a family with no
+        # transactions or trades falls back to oldest_entry_date, i.e. the
+        # previous behaviour; a family that has activity never does, even when
+        # that activity is today.
+        family = Current.family
+        earliest_activity_date = family&.earliest_activity_date
+        start_date = earliest_activity_date ? earliest_activity_date - 1.month : family&.oldest_entry_date
         # The guard is unchanged: a start of today or later is not a meaningful
         # "All Time" range, so it degrades to the historical 5-year range.
         start_date = 5.years.ago.to_date unless start_date && start_date < Date.current

@@ -661,7 +661,7 @@ class FamilyTest < ActiveSupport::TestCase
 
     account = family.accounts.first
     trade_date = 7.years.ago.to_date
-    trade = Trade.new(qty: 1, price: 100, currency: account.currency)
+    trade = Trade.new(qty: 1, price: 100, currency: account.currency, security: securities(:aapl))
     account.entries.create!(
       date: trade_date,
       amount: 100,
@@ -678,15 +678,13 @@ class FamilyTest < ActiveSupport::TestCase
     # legitimately be the earliest activity and make this assertion fail.
     family = Family.create!(
       name: "Valuations only #{SecureRandom.hex(3)}",
-      currency: "USD",
-      user: users(:jon),
+      currency: "USD"
     )
     account = family.accounts.create!(
       name: "Property #{SecureRandom.hex(3)}",
-      kind: "property",
-      label: "House",
+      balance: 100_000,
       currency: "USD",
-      accountable: Property.new,
+      accountable: Property.new
     )
     older_valuation_date = 8.years.ago.to_date
     account.entries.create!(
@@ -711,8 +709,7 @@ class FamilyTest < ActiveSupport::TestCase
   test "earliest_activity_date returns nil when the family has no entries" do
     family = Family.create!(
       name: "No activity #{SecureRandom.hex(3)}",
-      currency: "USD",
-      user: users(:jon),
+      currency: "USD"
     )
 
     assert_nil family.earliest_activity_date

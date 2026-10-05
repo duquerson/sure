@@ -171,6 +171,7 @@ class PeriodTest < ActiveSupport::TestCase
   test "all_time period uses fallback when oldest_entry_date equals current date" do
     # Mock a family that has no historical entries (oldest_entry_date returns today)
     mock_family = mock("family")
+    mock_family.expects(:earliest_activity_date).returns(nil)
     mock_family.expects(:oldest_entry_date).returns(Date.current)
     Current.expects(:family).at_least_once.returns(mock_family)
 
@@ -224,7 +225,7 @@ class PeriodTest < ActiveSupport::TestCase
     account.entries.create!(
       date: trade_date, amount: 500, currency: "USD",
       name: "Earlier trade",
-      entryable: Trade.new(qty: 5, price: 100, currency: "USD")
+      entryable: Trade.new(qty: 5, price: 100, currency: "USD", security: securities(:aapl))
     )
 
     period = Period.from_key("all_time")
@@ -280,7 +281,7 @@ class PeriodTest < ActiveSupport::TestCase
     assert_equal Date.current, period.end_date
   end
 
-  test "#300 first transaction dated today does not push start past today" do
+  test "#300 first transaction dated today anchors one month back, not to the 5-year fallback" do
     establish_family_context
     account = family_account
     account.entries.create!(
@@ -289,10 +290,29 @@ class PeriodTest < ActiveSupport::TestCase
     )
 
     period = Period.from_key("all_time")
-    # A start that is today or later degrades to the historical 5-year range so
-    # the chart always shows a meaningful window.
-    assert_operator period.start_date, :<=, Date.current
-    assert_equal 5.years.ago.to_date, period.start_date
+    assert_equal Date.current - 1.month, period.start_date
+    assert_equal Date.current, period.end_date
+  end
+
+  test "#300 first activity today ignores an older stray Valuation" do
+    establish_family_context
+    account = family_account
+    account.entries.create!(
+      date: Date.current, amount: 100, currency: "USD",
+      name: "First activity today", entryable: Transaction.new
+    )
+
+    start_without_stray = Period.from_key("all_time").start_date
+
+    account.entries.create!(
+      date: Date.new(2000, 8, 7), amount: 100, currency: "USD",
+      name: "Stray valuation", entryable: Valuation.new(kind: "opening_anchor")
+    )
+
+    # Before the fix in cubic's r4179448699 this picked the 2000 Valuation:
+    # activity dated today fell through to oldest_entry_date.
+    assert_equal start_without_stray, Period.from_key("all_time").start_date
+    assert_equal Date.current - 1.month, start_without_stray
   end
 
   test "#300 other period keys are untouched by the all_time change" do
@@ -322,5 +342,4 @@ class PeriodTest < ActiveSupport::TestCase
         balance: 1_000, currency: "USD", accountable: Investment.new
       )
     end
-  end
 end
