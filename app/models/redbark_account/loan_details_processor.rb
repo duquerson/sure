@@ -188,13 +188,26 @@ class RedbarkAccount::LoanDetailsProcessor
       return nil if from.nil? || to.nil? || to <= from
 
       months = ((to.year - from.year) * 12) + (to.month - from.month)
+      # An end date before the origination day in its month has not reached the
+      # anniversary, so that month is not complete (as in
+      # PlaidAccount::Liabilities::StudentLoanProcessor#term_months). Counting
+      # the calendar month alone overstated the term by one (#303).
+      months -= 1 if from + months.months > to
       months.positive? ? months : nil
     end
 
+    # A date is a four-digit CE year. `Date.parse` accepts years the database
+    # date column cannot hold ("10000000-01-01", "-4800-01-01"), and writing one
+    # raised PG::DatetimeFieldOverflow out of `enrich_attributes`, which -- terms
+    # being written before the rate -- stops the rate being applied (#303).
     def parse_date(value)
       return nil if value.blank?
 
-      Date.parse(value.to_s)
+      date = Date.parse(value.to_s)
+      return date if date.year.between?(1, 9999)
+
+      capture("Redbark reported a date outside years 1 to 9999; ignoring it", value: value.to_s)
+      nil
     rescue Date::Error
       capture("Redbark reported an unparseable date", value: value.to_s)
       nil
@@ -203,9 +216,31 @@ class RedbarkAccount::LoanDetailsProcessor
     def parse_decimal(value)
       return nil if value.blank?
 
-      BigDecimal(value.to_s)
+      amount = BigDecimal(value.to_s)
+      # A principal is judged AS THE COLUMN WILL STORE IT: rounded to its scale,
+      # positive, and within its precision. `BigDecimal` accepts "0", a negative,
+      # "NaN" and "Infinity"; the first three were stored, and `Infinity` -- like
+      # any figure past numeric(19,4), or one that rounds out of range -- raised
+      # numeric overflow out of `enrich_attributes`, which stops the rate being
+      # applied because terms are written before it. A figure that rounds to
+      # zero at the column's scale (0.00001) was stored as 0.0 (#303).
+      stored = amount.finite? ? amount.round(principal_type.scale) : nil
+      return stored if stored&.positive? && stored <= principal_limit
+
+      capture("Redbark reported a principal the loan cannot hold; ignoring it", value: value.to_s)
+      nil
     rescue ArgumentError, TypeError
       nil
+    end
+
+    def principal_type
+      Loan.type_for_attribute("initial_balance")
+    end
+
+    # The largest figure the column holds, derived from it rather than written
+    # out: 10^(precision - scale) less one unit at the column's scale.
+    def principal_limit
+      BigDecimal(10)**(principal_type.precision - principal_type.scale) - BigDecimal(10)**-principal_type.scale
     end
 
     # Every write goes through Enrichable: it skips locked attributes, records

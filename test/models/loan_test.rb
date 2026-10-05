@@ -654,6 +654,25 @@ class LoanTest < ActiveSupport::TestCase
     assert_includes payload[:aria_description], I18n.l(loan.payoff_projection.payoff_date, format: :long)
   end
 
+  # #21 AC#4. The accessible description must NAME the principal/interest
+  # composition -- the tooltip's shipped job -- so a locale edit that silently
+  # drops it takes this test down with it rather than regressing unseen.
+  #
+  # Pinned to the exact shipped sentence (config/locales/views/loans/en.yml,
+  # loans.tabs.schedule.chart.aria_description), compared verbatim against the
+  # rendered payload the way production reads it. The capitalized
+  # Principal/Interest are the schedule table's own names (loans.tabs.schedule.*)
+  # that the tooltip's composition row renders.
+  test "payoff_chart_payload's aria_description names the principal/interest composition of the payments" do
+    loan = build_chart_loan(balance: 500000)
+    loan.account.update!(balance: 450000)
+
+    description = loan.payoff_chart_payload[:aria_description]
+
+    assert_includes description,
+      "The tooltip on each scheduled point breaks the payment down into its Principal and Interest."
+  end
+
   # Regression: chart dates used to inherit PayoffProjection's payment-date
   # anchoring bug (Date.current.next_month instead of the loan's real
   # payment anchor day). Verifies the chart's forward-looking series line up
