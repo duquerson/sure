@@ -281,7 +281,11 @@ class Holding < ApplicationRecord
           # also writes only the columns listed, so a merged amount is never
           # validated. The original save!/update! raised RecordInvalid on
           # exactly this and rolled the whole remap back.
-          existing.update_columns(merge_attrs)
+          #
+          # update_columns does not touch updated_at, and cached investment
+          # series key on the newest holdings.updated_at
+          # (InvestmentStatement#holdings_version), so it is set here.
+          existing.update_columns(merge_attrs.merge(updated_at: Time.current))
           holding.destroy!
         else
           # No collision: update to new security.
@@ -299,7 +303,8 @@ class Holding < ApplicationRecord
           holding.update_columns(
             security_id: new_security.id,
             security_locked: true,
-            provider_security_id: holding.provider_security_id || old_security.id
+            provider_security_id: holding.provider_security_id || old_security.id,
+            updated_at: Time.current
           )
         end
       end
@@ -346,7 +351,8 @@ class Holding < ApplicationRecord
         holding.update_columns(
           security_id: original_security.id,
           security_locked: false,
-          provider_security_id: nil
+          provider_security_id: nil,
+          updated_at: Time.current
         )
       end
     end

@@ -151,23 +151,26 @@ class HoldingsController < ApplicationController
     new_security.failed_fetch_count = 0
     new_security.failed_fetch_at = nil
 
-    new_security.save!
-
     begin
-      @holding.remap_security!(new_security)
+      # Saving the security, moving the holdings and trades, and re-materializing
+      # run as one transaction, so a failure at any step leaves nothing changed
+      # and the alert below is true.
+      ActiveRecord::Base.transaction do
+        new_security.save!
 
-      # Re-materialize holdings with the new security's prices.
-      # Reload account to avoid stale associations from remap_security!.
-      # The around_action :switch_timezone already sets the family timezone
-      # for this request, so Date.current is correct here.
-      account = Account.find(@holding.account_id)
-      strategy = account.linked? ? :reverse : :forward
-      Balance::Materializer.new(account, strategy: strategy, security_ids: [ new_security.id ]).materialize_balances
+        @holding.remap_security!(new_security)
+
+        # Re-materialize holdings with the new security's prices.
+        # Reload account to avoid stale associations from remap_security!.
+        # The around_action :switch_timezone already sets the family timezone
+        # for this request, so Date.current is correct here.
+        account = Account.find(@holding.account_id)
+        strategy = account.linked? ? :reverse : :forward
+        Balance::Materializer.new(account, strategy: strategy, security_ids: [ new_security.id ]).materialize_balances
+      end
     rescue StandardError => e
-      # QA note #6: a failure (e.g. a record the model couldn't move) must reach
-      # the user as a real flash message on the redirect, not a 500 error
-      # response. The surrounding transaction has already rolled the remap
-      # back to a coherent state, so the account page is safe to show.
+      # A failure reaches the user as a flash alert on the redirect, not a 500
+      # error response. The transaction above has rolled everything back.
       Rails.logger.warn("remap_security failed for holding #{@holding.id}: #{e.class}: #{e.message}")
       flash[:alert] = t(".failed")
       redirect_to account_path(@holding.account, tab: "holdings")
@@ -224,9 +227,9 @@ class HoldingsController < ApplicationController
     begin
       @holding.reset_security_to_provider!
     rescue StandardError => e
-      # QA note #6: surface a failure as a real flash alert on the redirect,
-      # not a 500 error response. The surrounding transaction has already
-      # rolled the reset back, so the account page is safe to show.
+      # A failure reaches the user as a flash alert on the redirect, not a 500
+      # error response. reset_security_to_provider! writes inside one
+      # transaction, which has rolled the reset back.
       Rails.logger.warn("reset_security failed for holding #{@holding.id}: #{e.class}: #{e.message}")
       flash[:alert] = t(".failed")
       redirect_to account_path(@holding.account, tab: "holdings")

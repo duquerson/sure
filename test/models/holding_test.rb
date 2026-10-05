@@ -530,6 +530,46 @@ class HoldingTest < ActiveSupport::TestCase
     assert_nil @amzn.provider_security_id
   end
 
+  # #314 review (cubic): update_columns does not touch updated_at, and
+  # InvestmentStatement#holdings_version keys cached series on the newest
+  # holdings.updated_at. Each write a remap or reset makes must move it.
+  test "remap_security! bumps updated_at on a moved holding" do
+    new_security = create_security("GOOGTS", prices: [ { date: Date.current, price: 100.0 } ])
+    @account.holdings.update_all(updated_at: 2.days.ago)
+    before = @account.holdings.maximum(:updated_at)
+
+    @amzn.remap_security!(new_security)
+
+    moved = @account.holdings.where(security: new_security)
+    assert_equal 2, moved.count
+    moved.each { |h| assert_operator h.updated_at, :>, before }
+  end
+
+  test "remap_security! bumps updated_at on the row it merges into" do
+    new_security = create_security("GOOGTM", prices: [ { date: Date.current, price: 100.0 } ])
+    target = @account.holdings.create!(security: new_security, date: @amzn.date, qty: 1, price: 100.0, amount: 100.0, currency: @amzn.currency)
+    @account.holdings.update_all(updated_at: 2.days.ago)
+    before = target.reload.updated_at
+
+    @amzn.remap_security!(new_security)
+
+    assert_operator target.reload.updated_at, :>, before
+  end
+
+  test "reset_security_to_provider! bumps updated_at on the holdings it moves back" do
+    old_security = @amzn.security
+    new_security = create_security("GOOGTR", prices: [ { date: Date.current, price: 100.0 } ])
+    @amzn.remap_security!(new_security)
+    @account.holdings.update_all(updated_at: 2.days.ago)
+    before = @account.holdings.maximum(:updated_at)
+
+    @amzn.reset_security_to_provider!
+
+    reset = @account.holdings.where(security: old_security)
+    assert_equal 2, reset.count
+    reset.each { |h| assert_operator h.updated_at, :>, before }
+  end
+
   private
 
     def load_holdings
