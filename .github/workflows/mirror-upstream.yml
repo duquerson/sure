@@ -93,10 +93,23 @@ jobs:
           If the log shows a push refused for a \`.github/workflows/\` file, check that the \`MIRROR_PUSH_TOKEN\` secret exists and has not expired (#227). Close this issue once a run succeeds.
           EOF
 
-          # Only an issue this workflow opened can be the report.
-          matches="$(gh api --paginate \
-            "repos/${GH_REPO}/issues?state=open&creator=github-actions%5Bbot%5D&per_page=100" \
-            --jq ".[] | select(.pull_request | not) | select((.body // \"\") | contains(\"${marker}\")) | .number")"
+          # Only an issue this workflow opened can be the report. A lookup
+          # that fails is retried, never read as "no match": that would open a
+          # duplicate report on every failed run while the API is down.
+          lookup_ok=false
+          for wait in 0 10 30; do
+            sleep "$wait"
+            if matches="$(gh api --paginate \
+              "repos/${GH_REPO}/issues?state=open&creator=github-actions%5Bbot%5D&per_page=100" \
+              --jq ".[] | select(.pull_request | not) | select((.body // \"\") | contains(\"${marker}\")) | .number")"; then
+              lookup_ok=true
+              break
+            fi
+          done
+          if [ "$lookup_ok" != true ]; then
+            echo "::error::Could not look up an existing mirror failure issue, so none was opened or commented on. Run: ${RUN_URL}"
+            exit 1
+          fi
           existing="${matches%%$'\n'*}"
 
           if [ -n "$existing" ]; then
