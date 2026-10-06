@@ -209,6 +209,41 @@ class LoanOffsetAccountTest < ActiveSupport::TestCase
     assert_equal [ @offset.id ], @loan.reload.offset_accounts.pluck(:id)
   end
 
+  # --- the picker lists the offsets the loan already has ---------------------
+  #
+  # `eligible_accounts_for` validates a CANDIDATE link. Building a fresh
+  # `LoanOffsetAccount` for an account the loan already links trips the uniqueness
+  # scope on (loan_id, account_id), so every current offset was excluded from its
+  # own picker. That is what made the edit form unable to list -- and therefore
+  # unable to clear -- the offsets a loan had (#329).
+
+  test "eligible accounts include an offset the loan already links" do
+    @offset.auto_share_with_family!
+    @loan.update!(rate_type: "variable", offset_account_ids: [ @offset.id ])
+
+    assert_includes LoanOffsetAccount.eligible_accounts_for(@loan, viewer: users(:family_admin)).map(&:id),
+      @offset.id, "a loan's own offset must appear in its own picker"
+  end
+
+  # The other half of the rule: the stored row is reused only when the loan really
+  # links the account, so this cannot be used to offer something unlinked that the
+  # save would refuse.
+  test "eligible accounts exclude an unlinked account that would not validate" do
+    liability = @loan.account.family.accounts.create!(
+      name: "Liability offset", balance: 100, currency: "USD", accountable: CreditCard.new
+    )
+    @loan.account.share_with!(users(:family_member), permission: "read_only")
+    private_offset = @loan.account.family.accounts.create!(
+      name: "Private offset", balance: 100, currency: "USD", owner: users(:family_admin), accountable: Depository.new
+    )
+
+    eligible_ids = LoanOffsetAccount.eligible_accounts_for(@loan, viewer: users(:family_admin)).map(&:id)
+
+    assert_not_includes eligible_ids, liability.id
+    assert_not_includes eligible_ids, private_offset.id
+    assert_not_includes eligible_ids, @loan.account.id
+  end
+
   # --- #319: offsets are the only thing a nested save changes ----------------
 
   test "an edit through the account that changes only the offsets links them" do

@@ -948,6 +948,134 @@ class LoanTest < ActiveSupport::TestCase
     assert_equal [ offset.id ], Loan.find(loan.id).offset_accounts.pluck(:id)
   end
 
+  # --- Offset param contract: absent vs empty vs selection -------------------
+  #
+  # An absent offset_account_ids means the user did not request an offset change;
+  # an explicit empty value means remove all offsets. The writer normalizes both,
+  # so these pin what each one resolves to rather than what the form sends.
+
+  test "an absent offset_account_ids key leaves existing offsets in place" do
+    loan, first_offset, second_offset = loan_with_two_offsets
+
+    Loan.find(loan.id).update!(interest_rate: 6)
+
+    assert_equal [ first_offset.id, second_offset.id ].sort,
+      Loan.find(loan.id).offset_accounts.pluck(:id).sort
+  end
+
+  test "an explicit empty offset_account_ids removes every offset" do
+    loan, = loan_with_two_offsets
+
+    Loan.find(loan.id).update!(offset_account_ids: [ "" ])
+
+    assert_empty Loan.find(loan.id).offset_accounts
+  end
+
+  test "an explicit offset_account_ids selection replaces the linked set" do
+    loan, = loan_with_two_offsets
+    replacement = loan.account.family.accounts.create!(
+      name: "Replacement Offset", balance: 8_000, currency: "USD", accountable: Depository.new
+    )
+
+    Loan.find(loan.id).update!(offset_account_ids: [ replacement.id ])
+
+    assert_equal [ replacement.id ], Loan.find(loan.id).offset_accounts.pluck(:id)
+  end
+
+  test "an explicit offset_account_ids selection can add an offset" do
+    loan, existing, added = loan_with_two_offsets
+
+    Loan.find(loan.id).update!(offset_account_ids: [ existing.id, added.id ])
+
+    assert_equal [ existing.id, added.id ].sort,
+      Loan.find(loan.id).offset_accounts.pluck(:id).sort
+  end
+
+  # The round-trip a form edit depends on. A drifted offset is dropped from the
+  # picker, so the form resubmits only the ones still on offer. That narrowed
+  # submission means "no change to the set", not "replace the set with these",
+  # or an edit of an unrelated field would unlink an account the user was never
+  # shown and never chose to remove.
+  test "resubmitting the offered offsets preserves a link that drifted out of eligibility" do
+    loan, eligible, ineligible = loan_with_two_offsets
+    ineligible.update_columns(currency: "EUR")
+
+    Loan.find(loan.id).update!(offset_account_ids: [ eligible.id ], interest_rate: 6)
+
+    reloaded = Loan.find(loan.id)
+    assert_equal [ eligible.id, ineligible.id ].sort, reloaded.offset_accounts.pluck(:id).sort,
+      "an edit of another field must not unlink an offset the picker no longer offers"
+    assert_equal 6, reloaded.interest_rate.to_i
+  end
+
+  # `sync_offset_accounts` runs twice per save through the nested account save,
+  # so an empty selection has to survive being applied twice: the second pass
+  # sees a stale, already-emptied association, and comparing `[] == []` would
+  # read an explicit deselect-all as "unchanged" and re-create the links the
+  # first pass deleted.
+  test "an explicit empty selection stays empty when the sync runs twice" do
+    loan, = loan_with_two_offsets
+
+    loan = Loan.find(loan.id)
+    loan.offset_account_ids = [ "" ]
+    loan.save!
+    assert_empty loan.reload.offset_accounts, "first pass"
+
+    loan.offset_account_ids = [ "" ]
+    loan.save!
+    assert_empty loan.reload.offset_accounts, "second pass must not resurrect the links"
+  end
+
+  # An empty selection is an instruction to remove, never a no-op, so it must not
+  # be reachable through the "unchanged" branch at all.
+  test "an empty selection is never treated as an unchanged one" do
+    loan, = loan_with_two_offsets
+    loan = Loan.find(loan.id)
+
+    loan.offset_account_ids = [ "" ]
+
+    assert_not loan.send(:submitted_offset_selection_unchanged?),
+      "an explicit deselect-all must not be classified as 'no change to the set'"
+  end
+
+  # Naming a drifted offset explicitly is a request the model refuses, and the
+  # refusal is what keeps it linked: the save fails, so `sync_offset_accounts`
+  # never runs and nothing is unlinked behind a red form.
+  test "naming a link that drifted out of eligibility fails the save" do
+    loan, eligible, ineligible = loan_with_two_offsets
+    ineligible.update_columns(currency: "EUR")
+
+    reloaded = Loan.find(loan.id)
+    assert_not reloaded.update(offset_account_ids: [ eligible.id, ineligible.id ]),
+      "an explicit submission of an ineligible offset must be refused"
+    assert_predicate reloaded.errors[:offset_account_ids], :any?
+    assert_equal [ eligible.id, ineligible.id ].sort, reloaded.reload.offset_accounts.pluck(:id).sort
+  end
+
+  test "an explicit offset change drops an ineligible link" do
+    loan, _eligible, ineligible = loan_with_two_offsets
+    ineligible.update_columns(currency: "EUR")
+    replacement = loan.account.family.accounts.create!(
+      name: "New Eligible Offset", balance: 9_000, currency: "USD", accountable: Depository.new
+    )
+
+    Loan.find(loan.id).update!(offset_account_ids: [ replacement.id ])
+
+    assert_equal [ replacement.id ], Loan.find(loan.id).offset_accounts.pluck(:id)
+  end
+
+  # The comparison happens against string ids, so a selection submitted as
+  # strings must not read as different from the integer ids already linked.
+  test "an unchanged selection submitted as strings is still an unchanged selection" do
+    loan, eligible, extra = loan_with_two_offsets
+
+    Loan.find(loan.id).update!(offset_account_ids: [ eligible.id.to_s, extra.id.to_s ], interest_rate: 7)
+
+    reloaded = Loan.find(loan.id)
+    assert_equal [ eligible.id, extra.id ].sort, reloaded.offset_accounts.pluck(:id).sort
+    assert_equal 7, reloaded.interest_rate.to_i
+  end
+
   # #223. The dated-rate rules, shared by every provider that reports a
   # variable rate. The loan only answers what should be written; the provider
   # writes it, so locks and provenance stay with the provider's writer.
@@ -998,6 +1126,22 @@ class LoanTest < ActiveSupport::TestCase
   end
 
   private
+    def loan_with_two_offsets
+      family = families(:dylan_family)
+      loan = family.accounts.create!(
+        name: "Two Offset Loan #{SecureRandom.hex(4)}", balance: 250_000, currency: "USD",
+        accountable: Loan.new(rate_type: "variable", interest_rate: 5, term_months: 240)
+      ).loan
+      first_offset = family.accounts.create!(
+        name: "Eligible Offset #{SecureRandom.hex(4)}", balance: 10_000, currency: "USD", accountable: Depository.new
+      )
+      second_offset = family.accounts.create!(
+        name: "Second Offset #{SecureRandom.hex(4)}", balance: 7_000, currency: "USD", accountable: Depository.new
+      )
+      loan.update!(offset_account_ids: [ first_offset.id, second_offset.id ])
+      [ loan, first_offset, second_offset ]
+    end
+
     def build_chart_loan(balance:, interest_rate: 3.5, term_months: 360, start_date: Date.current, rate_type: "fixed")
       account = Account.create! \
         family: families(:dylan_family),

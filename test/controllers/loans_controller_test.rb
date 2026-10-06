@@ -614,12 +614,17 @@ class LoansControllerTest < ActionDispatch::IntegrationTest
     assert_equal link_ids, loan.reload.loan_offset_accounts.pluck(:id)
   end
 
-  # Known limitation, tracked in #329 and kept out of #319's scope by the owner:
-  # the form's multiple select has `include_hidden: false`, so deselecting every
-  # offset submits no offset key, and the controller pre-fills the existing ids.
-  # The last offset therefore cannot be removed from the form. This pins today's
-  # behaviour so #329's form change has to update it deliberately.
-  test "deselecting every offset in the edit form keeps the links (#329)" do
+  # #329, which #319 deliberately left as a known limitation: the form's multiple
+  # select had `include_hidden: false`, so deselecting every offset submitted no
+  # offset key and the controller pre-filled the existing ids. The last offset
+  # therefore could not be removed from the form.
+  #
+  # The select now carries a hidden blank, so a deselect-all reaches the server
+  # as `[""]` and the writer reads it as an explicit empty selection. Nothing
+  # else on the loan changes, which is the case `Loan#changed_for_autosave?`
+  # exists for: without it the nested save would skip the loan entirely and the
+  # links would survive a request that asked to remove them.
+  test "deselecting every offset in the edit form removes the links" do
     loan = @account.accountable
     offset = shared_offset
     loan.update!(rate_type: "variable", offset_account_ids: [ offset.id ])
@@ -628,15 +633,19 @@ class LoansControllerTest < ActionDispatch::IntegrationTest
     get edit_loan_path(@account)
     assert_response :success
     assert_select "select[name=?][multiple]", "account[accountable_attributes][offset_account_ids][]"
-    assert_select "input[type=hidden][name=?]", "account[accountable_attributes][offset_account_ids][]", count: 0,
-      message: "with no hidden blank, a deselect-all submits no offset key"
+    assert_select "input[type=hidden][name=?][value=?]",
+      "account[accountable_attributes][offset_account_ids][]", "",
+      count: 1,
+      message: "without the hidden blank a deselect-all submits no offset key"
 
-    patch loan_path(@account), params: {
-      account: { accountable_attributes: { id: loan.id, rate_type: loan.rate_type } }
-    }
+    assert_difference -> { loan.loan_offset_accounts.count }, -1 do
+      patch loan_path(@account), params: offset_only_params(loan, [ "" ])
+    end
 
     assert_redirected_to @account
-    assert_equal link_ids, loan.reload.loan_offset_accounts.pluck(:id)
+    assert_empty loan.reload.offset_accounts
+    assert_not_includes loan.loan_offset_accounts.pluck(:id), link_ids,
+      "the join row must be deleted, not merely detached"
   end
 
   # Completes #290's boundary case, which #317 could only test with another loan
@@ -656,10 +665,116 @@ class LoansControllerTest < ActionDispatch::IntegrationTest
     assert_equal [ offset.id ], loan.reload.offset_accounts.pluck(:id)
   end
 
+  # The rest of the absent/empty/selection contract. Absent means the request
+  # never mentioned offsets; explicit empty means remove them; an explicit
+  # selection means replace the set. None of these change another loan column,
+  # so each depends on `Loan#changed_for_autosave?` pulling the loan into the
+  # nested save -- without it the loan is skipped and the links never move.
+
+  test "an explicit empty offset_account_ids removes every offset" do
+    loan = @account.accountable
+    first, second = shared_offset, shared_offset(balance: 7_000)
+    loan.update!(rate_type: "variable", offset_account_ids: [ first.id, second.id ])
+
+    assert_difference -> { loan.loan_offset_accounts.count }, -2 do
+      patch loan_path(@account), params: offset_only_params(loan, [ "" ])
+    end
+
+    assert_redirected_to @account
+    assert_empty loan.reload.offset_accounts
+  end
+
+  test "an explicit offset_account_ids selection replaces the linked set" do
+    loan = @account.accountable
+    first, second = shared_offset, shared_offset(balance: 7_000)
+    replacement = shared_offset(balance: 9_000)
+    loan.update!(rate_type: "variable", offset_account_ids: [ first.id, second.id ])
+
+    patch loan_path(@account), params: offset_only_params(loan, [ "", replacement.id ])
+
+    assert_redirected_to @account
+    assert_equal [ replacement.id ], loan.reload.offset_accounts.pluck(:id)
+  end
+
+  # An offset that drifts out of eligibility drops out of the picker, so the
+  # form can no longer submit it. Re-submitting what the picker DOES offer is
+  # therefore a narrowed selection -- and treating it as "replace the set" would
+  # unlink the drifted account on an edit of an unrelated field, an account the
+  # user was never shown and never chose to remove.
+  test "resubmitting the offered offsets keeps a link that drifted out of eligibility" do
+    loan = @account.accountable
+    kept, drifted = shared_offset, shared_offset(balance: 7_000)
+    loan.update!(rate_type: "variable", offset_account_ids: [ kept.id, drifted.id ])
+    drifted.update_columns(currency: "EUR")
+
+    get edit_loan_path(@account)
+    assert_select "select[name=?] option[value=?][selected]",
+      "account[accountable_attributes][offset_account_ids][]", kept.id
+    assert_select "select[name=?] option[value=?]", "account[accountable_attributes][offset_account_ids][]",
+      drifted.id, count: 0,
+      message: "an offset that stopped being eligible must not be offered"
+
+    patch loan_path(@account), params: offset_only_params(loan, [ "", kept.id ])
+
+    assert_redirected_to @account
+    assert_equal [ kept.id, drifted.id ].sort, loan.reload.offset_accounts.pluck(:id).sort
+  end
+
+  # The other direction: a narrowed submission that really was a deselection
+  # still removes. Comparing "unchanged" against the offered set rather than
+  # against every link is what keeps this honest.
+  test "an explicit offset change drops an ineligible link" do
+    loan = @account.accountable
+    kept, drifted = shared_offset, shared_offset(balance: 7_000)
+    replacement = shared_offset(balance: 9_000)
+    loan.update!(rate_type: "variable", offset_account_ids: [ kept.id, drifted.id ])
+    drifted.update_columns(currency: "EUR")
+
+    patch loan_path(@account), params: offset_only_params(loan, [ "", replacement.id ])
+
+    assert_equal [ replacement.id ], loan.reload.offset_accounts.pluck(:id)
+  end
+
+  # A failed save renders the form again, so the blank has to survive the
+  # round-trip: without it the retry would submit no offset key and read as
+  # "leave them alone" instead of "clear them".
+  test "clearing offsets with an invalid attribute re-renders a hidden empty offset input" do
+    loan = @account.accountable
+    offset = shared_offset
+    loan.update!(rate_type: "variable", offset_account_ids: [ offset.id ])
+
+    patch loan_path(@account), params: {
+      account: { accountable_attributes: { id: loan.id, interest_rate: 101, offset_account_ids: [ "" ] } }
+    }
+
+    assert_response :unprocessable_entity
+    assert_equal [ offset.id ], loan.reload.offset_accounts.pluck(:id)
+    assert_select "input[type=hidden][name=?][value=?]",
+      "account[accountable_attributes][offset_account_ids][]", ""
+  end
+
+  test "retrying a cleared offset selection after a validation error removes the offsets" do
+    loan = @account.accountable
+    offset = shared_offset
+    loan.update!(rate_type: "variable", offset_account_ids: [ offset.id ])
+
+    patch loan_path(@account), params: {
+      account: { accountable_attributes: { id: loan.id, interest_rate: 101, offset_account_ids: [ "" ] } }
+    }
+    assert_response :unprocessable_entity
+
+    patch loan_path(@account), params: {
+      account: { accountable_attributes: { id: loan.id, interest_rate: 6, offset_account_ids: [ "" ] } }
+    }
+
+    assert_redirected_to @account
+    assert_empty loan.reload.offset_accounts
+  end
+
   private
     def shared_offset(balance: 0)
       @account.family.accounts.create!(
-        name: "Offset", balance: balance, currency: @account.currency, accountable: Depository.new
+        name: "Offset #{SecureRandom.hex(4)}", balance: balance, currency: @account.currency, accountable: Depository.new
       ).tap(&:auto_share_with_family!)
     end
 

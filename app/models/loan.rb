@@ -75,7 +75,17 @@ class Loan < ApplicationRecord
   belongs_to :collateral_account, class_name: "Account", optional: true
   validate :collateral_account_is_eligible, if: :will_save_change_to_collateral_account_id?
 
-  attr_accessor :offset_account_ids
+  # An absent offset_account_ids means the user did not request an offset change;
+  # an explicit empty value means remove all offsets.
+  #
+  # The writer normalizes ids to strings and drops the blank placeholder a
+  # multi-select emits, so readers only ever see nil or a list of real ids.
+  # `offset_account_ids_supplied?` is what separates the two cases.
+  attr_reader :offset_account_ids
+
+  def offset_account_ids=(ids)
+    @offset_account_ids = ids.nil? ? nil : Array(ids).map(&:to_s).reject(&:blank?)
+  end
 
   # Structured {effective_date, rate} rows from the form. The jsonb column is
   # deliberately NOT mass-assignable: permitting a free-form hash would let a
@@ -867,11 +877,11 @@ class Loan < ApplicationRecord
 
     # Whether this save carried the offset attribute at all. `nil` means "not
     # about offsets"; an empty array means "remove them all" -- conflating the
-    # two would silently unlink every offset on an unrelated edit.
+    # two would silently unlink every offset on an unrelated edit. See
+    # `offset_account_ids=` for where that distinction is established.
     def offset_account_ids_supplied?
       !offset_account_ids.nil?
     end
-
 
     # Also syncs on a rate-type change, because BECOMING fixed is what makes a
     # loan's offset links meaningless -- `sync_offset_accounts` clears them for
@@ -891,15 +901,57 @@ class Loan < ApplicationRecord
       # passed.
       ids = if !variable_rate_type?
         []
-      elsif offset_account_ids_supplied?
-        offset_account_ids_for_sync.map(&:id)
-      else
+      elsif !offset_account_ids_supplied?
         loan_offset_accounts.pluck(:account_id)
+      elsif submitted_offset_selection_unchanged?
+        # The submission is exactly the set the picker offered, so this is an
+        # edit of other fields rather than a request to change the set. Without
+        # this branch, editing an unrelated field while the picker offered the
+        # still-valid offsets would unlink every offset that had since drifted
+        # out of eligibility -- the user was never offered those, so they were
+        # never given the chance to remove them.
+        #
+        # Note this makes the picker's visible set and the effective delete
+        # target diverge: what a save submits is authoritative for what it ADDS
+        # and for what it still offers, never for unlinking something it no
+        # longer offers. Removing a drifted offset deliberately is a separate
+        # question, tracked separately.
+        loan_offset_accounts.pluck(:account_id)
+      else
+        offset_account_ids_for_sync.map(&:id)
       end
 
       loan_offset_accounts.where.not(account_id: ids).delete_all
       ids.each do |account_id|
         loan_offset_accounts.find_or_create_by!(account_id:)
+      end
+    end
+
+    # Whether the submission is the set the form already had selected.
+    #
+    # An EMPTY submission is never "unchanged": it is the explicit instruction to
+    # remove every offset. The degenerate comparison `[] == []` would otherwise
+    # classify a deselect-all as a no-op, and `sync_offset_accounts` runs twice
+    # per save (the loan's `touch: true` on its account re-enters the nested
+    # save), so the second pass -- holding a stale, already-emptied association --
+    # would read `[] == []`, take the no-op branch and re-create the very links
+    # the first pass had just deleted.
+    def submitted_offset_selection_unchanged?
+      submitted = normalized_offset_account_ids
+      return false if submitted.empty?
+
+      submitted.sort == currently_offered_offset_account_ids.sort
+    end
+
+    # The ids the picker is offering right now. `eligible_accounts_for` judges a
+    # fresh candidate link, so a link that has since stopped validating drops out
+    # of the picker -- this mirrors that, and must agree with it: comparing
+    # against every current link instead would treat a narrowed submission as
+    # unchanged whenever the only thing missing was an un-offered account, and
+    # the "unchanged" branch would then swallow a deselection the user did make.
+    def currently_offered_offset_account_ids
+      loan_offset_accounts.reload.includes(:account).filter_map do |link|
+        link.account_id.to_s if link.account && link.valid?
       end
     end
 
@@ -953,10 +1005,12 @@ class Loan < ApplicationRecord
       Account.where(id: normalized_offset_account_ids).to_a
     end
 
-    # Form input arrives with blanks and duplicates and as mixed types; this is
-    # the one place that is tidied, so every reader sees the same shape.
+    # `offset_account_ids=` already stringifies, drops blanks and is nil-aware, so
+    # this only has to de-duplicate. Uniq because a multi-select submits the
+    # same id twice if it is somehow listed twice, and `find_or_create_by!` on a
+    # repeated id is a wasted round-trip rather than an error.
     def normalized_offset_account_ids
-      Array(offset_account_ids).reject(&:blank?).map(&:to_s).uniq
+      Array(offset_account_ids).uniq
     end
 
     # Rates are money-adjacent, so they are compared and compounded as

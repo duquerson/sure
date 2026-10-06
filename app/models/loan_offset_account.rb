@@ -15,10 +15,25 @@ class LoanOffsetAccount < ApplicationRecord
     def eligible_accounts_for(loan, viewer:)
       return Account.none unless loan.account && viewer
 
+      # The picker judges a CANDIDATE link, and building a fresh
+      # `LoanOffsetAccount` for an account the loan ALREADY links trips the
+      # uniqueness scope on (loan_id, account_id). Every current offset was
+      # therefore excluded from its own picker, which is why the edit form could
+      # not list -- let alone clear -- the offsets a loan already had. Reuse the
+      # stored row for a linked account so its own validation runs instead.
+      #
+      # A link that no longer validates still drops out, exactly as an unlinked
+      # candidate would. What a save should then do with such a link is a
+      # separate question and is deliberately left alone here.
+      existing_links = loan.loan_offset_accounts.index_by(&:account_id)
+
       Account.accessible_by(viewer)
         .where(family_id: loan.account.family_id, classification: "asset", currency: loan.account.currency)
         .where.not(id: loan.account.id)
-        .select { |account| new(loan: loan, account: account).valid? }
+        .select do |account|
+          link = existing_links[account.id]
+          link ? link.valid? : new(loan: loan, account: account).valid?
+        end
     end
 
     def invalidate_for_sharing_change!(account)

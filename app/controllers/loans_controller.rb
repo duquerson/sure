@@ -49,9 +49,38 @@ class LoansController < ApplicationController
       @collateral_candidates = candidates
     end
 
+    # The loan is the one whose params were just assigned, so its virtual attribute
+    # already reflects the submission and nil means the request carried no offset
+    # key at all. Pre-filling unconditionally would overwrite that and make an
+    # absent key indistinguishable from an explicit selection -- which is what
+    # silently unlinked every offset on an unrelated edit. `new`/`edit` still
+    # pre-fill so the form can render the current links; `update` must not.
     def set_offset_accounts
-      loan = @account&.accountable || Loan.new
-      loan.offset_account_ids ||= loan.loan_offset_accounts.pluck(:account_id) if loan.persisted?
+      loan = offset_form_loan
+      if loan.persisted? && loan.offset_account_ids.nil? && action_name.in?(%w[new edit])
+        loan.offset_account_ids = loan.loan_offset_accounts.pluck(:account_id)
+      end
+
       @offset_accounts = LoanOffsetAccount.eligible_accounts_for(loan, viewer: Current.user)
+      @offset_accounts_allow_empty_submission = offset_accounts_allow_empty_submission?
+    end
+
+    def offset_form_loan
+      @account&.accountable || Loan.new
+    end
+
+    # Whether the form may render the hidden blank input. That input is the only
+    # thing that makes "deselect everything" reach the server, so it is emitted
+    # whenever every linked offset is still on offer. If one has drifted out of
+    # eligibility it is already gone from the picker, and offering a blank that
+    # would clear the visible ones would silently unlink the invisible one too --
+    # so the blank is withheld and the loan keeps its links until that offset is
+    # dealt with. A loan with no drifted offsets, which is the common case, is
+    # unblocked (#329).
+    def offset_accounts_allow_empty_submission?
+      offered_ids = @offset_accounts.map { |account| account.id.to_s }
+      linked_ids = offset_form_loan.loan_offset_accounts.map { |link| link.account_id.to_s }
+
+      (linked_ids - offered_ids).empty?
     end
 end
