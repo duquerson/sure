@@ -64,9 +64,7 @@ module SnaptradeAccount::DataHelpers
       ticker = symbol.to_s.upcase.strip
       return nil if ticker.blank?
 
-      security = held_security_for(account, ticker) ||
-                 reported_exchange_security_for(ticker, symbol_data) ||
-                 preferred_security_for(ticker)
+      security = existing_security_for(ticker, symbol_data, account)
 
       # If security exists but has a bad name (looks like a hash), update it
       if security && security.name&.start_with?("{")
@@ -91,7 +89,13 @@ module SnaptradeAccount::DataHelpers
     rescue ActiveRecord::RecordInvalid, ActiveRecord::RecordNotUnique => e
       # Handle race condition - another process may have created it
       Rails.logger.error "Failed to create security #{ticker}: #{e.message}"
-      preferred_security_for(ticker) # Retry find in case of race condition
+      existing_security_for(ticker, symbol_data, account) # Retry find in case of race condition
+    end
+
+    def existing_security_for(ticker, symbol_data, account)
+      held_security_for(account, ticker) ||
+        reported_exchange_security_for(ticker, symbol_data) ||
+        preferred_security_for(ticker)
     end
 
     # The row the position currently sits on, so it never moves. That includes
@@ -115,7 +119,10 @@ module SnaptradeAccount::DataHelpers
       exchange = extract_exchange(symbol_data)
       return nil if exchange.blank?
 
-      Security.find_by_ticker_and_exchange(ticker: ticker, exchange_operating_mic: exchange)
+      # Rows SnapTrade created carry its exchange in exchange_mic, not
+      # exchange_operating_mic, so they need a second match.
+      Security.find_by_ticker_and_exchange(ticker: ticker, exchange_operating_mic: exchange) ||
+        Security.where("UPPER(ticker) = ?", ticker).where(exchange_mic: exchange).order(:created_at, :id).first
     end
 
     def preferred_security_for(ticker)

@@ -191,6 +191,29 @@ class SnaptradeDataHelpersTest < ActiveSupport::TestCase
     Security.singleton_class.send(:remove_method, :create!)
   end
 
+  test "resolve_security race retry still prefers the row on the reported exchange" do
+    reported = nil
+    Security.define_singleton_method(:create!) do |*|
+      Security.new(ticker: "RACEMIC", name: "Priced", exchange_operating_mic: "XNYS", price_provider: "yahoo_finance").save!
+      reported = Security.new(ticker: "RACEMIC", name: "Reported", exchange_operating_mic: "XNAS").tap(&:save!)
+      raise ActiveRecord::RecordNotUnique
+    end
+
+    result = @helper.test_resolve_security("RACEMIC", { "exchange" => { "mic_code" => "XNAS" } })
+
+    assert_not_nil reported
+    assert_equal reported, result
+  ensure
+    Security.singleton_class.send(:remove_method, :create!)
+  end
+
+  test "resolve_security matches a row SnapTrade created on the reported exchange" do
+    Security.create!(ticker: "DUPS", name: "Other exchange", exchange_operating_mic: "XASX", price_provider: "yahoo_finance")
+    snaptrade_row = Security.create!(ticker: "DUPS", name: "SnapTrade row", exchange_mic: "XNYS")
+
+    assert_equal snaptrade_row, @helper.test_resolve_security("DUPS", { "exchange" => { "mic_code" => "XNYS" } })
+  end
+
   test "resolve_security follows the account's latest holding when its position already moved rows" do
     account = accounts(:investment)
     earlier = Security.create!(ticker: "DUPL", name: "Earlier row", exchange_operating_mic: "XNYS", price_provider: "yahoo_finance")
