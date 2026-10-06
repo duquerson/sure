@@ -642,6 +642,8 @@ export default class extends Controller {
       .style("z-index", 999)
       .style("left", `${adjustedX}px`)
       .style("top", `${pageY - 10}px`);
+
+    this._appendComparisonTooltip(datum);
   }
 
   _hideTooltip() {
@@ -678,7 +680,6 @@ export default class extends Controller {
         `
         }
       </div>
-      ${this._comparisonTooltipTemplate(datum)}
     `;
   }
 
@@ -686,11 +687,14 @@ export default class extends Controller {
   // trendline, signed, with the difference as a percentage of the comparison.
   // The percentage is left off when it has no finite value (a comparison of
   // zero), rather than shown as infinity.
-  _comparisonTooltipTemplate(datum) {
+  //
+  // Built as DOM nodes with d3's `.text()`, not as an HTML string, so no
+  // label or amount is ever parsed as markup.
+  _appendComparisonTooltip(datum) {
     const point = this._comparisonPoints.find(
       (p) => p.date.getTime() === datum.date.getTime(),
     );
-    if (!point) return "";
+    if (!point || !this._d3Tooltip) return;
 
     const difference = point.difference;
     const amount = this._extractNumericValue(difference.value);
@@ -700,18 +704,36 @@ export default class extends Controller {
         ? ""
         : ` (${difference.percent > 0 ? "+" : ""}${difference.percent_formatted})`;
 
-    return `
-      <div class="mt-1 space-y-0.5">
-        <div class="flex items-center justify-between gap-4">
-          <span class="text-secondary">${this.comparisonValue.label}</span>
-          <span class="text-primary tabular-nums">${this._extractFormattedValue(point.value)}</span>
-        </div>
-        <div class="flex items-center justify-between gap-4">
-          <span class="text-secondary">${this.comparisonValue.difference_label}</span>
-          <span class="tabular-nums" style="color: ${difference.color};">${sign}${this._extractFormattedValue(difference.value)}${percent}</span>
-        </div>
-      </div>
-    `;
+    const block = this._d3Tooltip
+      .append("div")
+      .attr("class", "mt-1 space-y-0.5");
+
+    const contributionsRow = block
+      .append("div")
+      .attr("class", "flex items-center justify-between gap-4");
+    contributionsRow
+      .append("span")
+      .attr("class", "text-secondary")
+      .text(this.comparisonValue.label);
+    contributionsRow
+      .append("span")
+      .attr("class", "text-primary tabular-nums")
+      .text(this._extractFormattedValue(point.value));
+
+    const differenceRow = block
+      .append("div")
+      .attr("class", "flex items-center justify-between gap-4");
+    differenceRow
+      .append("span")
+      .attr("class", "text-secondary")
+      .text(this.comparisonValue.difference_label);
+    differenceRow
+      .append("span")
+      .attr("class", "tabular-nums")
+      .style("color", difference.color)
+      .text(
+        `${sign}${this._extractFormattedValue(difference.value)}${percent}`,
+      );
   }
 
   _getTrendIcon(datum) {

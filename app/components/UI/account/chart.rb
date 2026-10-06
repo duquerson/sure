@@ -143,6 +143,13 @@ class UI::Account::Chart < ApplicationComponent
     }
   end
 
+  # A flow the line counts could not be valued (no exchange rate, or a
+  # journalled position with no price that day), so the line is understated
+  # and the gap overstates growth. Said under the legend rather than hidden.
+  def net_contributions_understated?
+    account.net_contributions_understated?(period: period)
+  end
+
   # The legend under the chart names both lines. The value line takes its
   # trend colour from the series, so its swatch does too.
   def net_contributions_legend

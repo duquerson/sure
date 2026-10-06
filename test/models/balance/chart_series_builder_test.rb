@@ -610,6 +610,32 @@ class Balance::ChartSeriesBuilderTest < ActiveSupport::TestCase
     assert_equal 15_000, values[1].trend.current.amount
   end
 
+  # Light Gatekeeper review on #337: a flow the returns engine cannot value
+  # counts as nothing, so the line is understated from that day. The builder
+  # says so rather than hiding it.
+  test "net contributions say when a flow could not be valued" do
+    account = create_portfolio_account(family: families(:empty))
+    lay_balance account: account, date: @day_one, opening: 1_000, closing: 1_000
+    deposit account: account, date: @day_one + 1, amount: 500
+    builder = contributions_builder(account)
+
+    refute builder.net_contributions_understated?, "every flow valued"
+
+    deposit account: account, date: @day_one + 2, amount: 1_000, currency: "EUR" # no EUR rate at all
+    unconverted = contributions_builder(account)
+
+    assert unconverted.net_contributions_understated?, "a flow with no rate"
+    assert_equal 1_500, unconverted.net_contributions_series.values.last.value.amount, "and it counts as nothing"
+  end
+
+  test "an unpriced journal makes net contributions understated" do
+    account = create_portfolio_account(family: families(:empty))
+    lay_balance account: account, date: @day_one, opening: 1_000, closing: 1_000
+    security_journal account: account, date: @day_one + 1, qty: 10 # no price that day
+
+    assert contributions_builder(account).net_contributions_understated?
+  end
+
   private
     def lay_contributions_example
       account = create_portfolio_account(family: families(:empty))

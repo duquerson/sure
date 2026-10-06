@@ -54,6 +54,15 @@ module Account::Chartable
     normalize_linked_investment_series(builder.send("#{view}_series"), view: view)
   end
 
+  # True when a flow the net contributions line counts could not be valued
+  # (#326), so the chart can say the line is understated.
+  def net_contributions_understated?(period: Period.last_30_days, interval: nil)
+    value_dates = balance_series(period: period, view: :balance, interval: interval).values.map(&:date)
+
+    chart_series_builder(period: period, interval: interval)
+      .net_contributions_understated?(anchor_date: net_contributions_anchor_date, dates: value_dates)
+  end
+
   def sparkline_series
     cache_key = family.build_cache_key("#{id}_sparkline_#{SPARKLINE_CACHE_VERSION}", invalidate_on_data_updates: true)
 
@@ -106,16 +115,36 @@ module Account::Chartable
     # two lines start together and the difference opens at zero. The anchor
     # comes from the account's history, not the period, so it is the same
     # whichever period is shown.
+    #
+    # On the anchor date itself the line takes the value line's own point.
+    # They are the same figure unless a coarse interval skipped that date and
+    # the normalizer prepended a synthetic opening point (0, or the opening
+    # anchor's balance); the line then starts from that point too, rather
+    # than from a different figure on the same day.
     def net_contributions_series(period:, interval:)
-      value_dates = balance_series(period: period, view: :balance, interval: interval).values.map(&:date)
+      value_series = balance_series(period: period, view: :balance, interval: interval)
+      value_dates = value_series.values.map(&:date)
+      anchor_date = net_contributions_anchor_date
       series = chart_series_builder(period: period, interval: interval)
-        .net_contributions_series(anchor_date: net_contributions_anchor_date, dates: value_dates)
+        .net_contributions_series(anchor_date: anchor_date, dates: value_dates)
+
+      anchor_point = anchor_date && value_series.values.find { |value| value.date == anchor_date }
+      amounts = series.values.map do |value|
+        anchor_point && value.date == anchor_date ? anchor_point.value : value.value
+      end
 
       Series.new(
         start_date: value_dates.min || series.start_date,
         end_date: series.end_date,
         interval: series.interval,
-        values: series.values,
+        values: series.values.zip(amounts).each_with_index.map do |(value, amount), index|
+          Series::Value.new(
+            date: value.date,
+            date_formatted: value.date_formatted,
+            value: amount,
+            trend: Trend.new(current: amount, previous: index.zero? ? amount : amounts[index - 1], favorable_direction: series.favorable_direction)
+          )
+        end,
         favorable_direction: series.favorable_direction
       )
     end

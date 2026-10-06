@@ -68,6 +68,9 @@
             <%= item[:label] %>
           </span>
         <% end %>
+        <% if net_contributions_understated? %>
+          <p class="w-full text-xs text-secondary" data-net-contributions-understated><%= t("UI.account.chart.net_contributions.understated") %></p>
+        <% end %>
       </div>
     <% end %>
   <% end %>

@@ -84,6 +84,9 @@ class Balance::ChartSeriesBuilder
   # dates so the two are drawn on the same points.
   #
   # Dates before the accounts' first balance read zero, as the value line does.
+  #
+  # Accounts that hold trades are assets, so no sign is applied here; the
+  # only caller draws this line for them alone (UI::Account::Chart).
   def net_contributions_series(anchor_date: nil, dates: nil)
     dates = (dates || query_data.map(&:date)).sort
     cumulative = net_contributions_by_date(anchor_date: anchor_date, through: dates.max).to_h
@@ -114,6 +117,20 @@ class Balance::ChartSeriesBuilder
     raise
   end
 
+  # True when a flow the line counts could not be valued, so the line is
+  # understated by it from that day on. The returns engine reads the same
+  # two conditions: a flow in a currency with no rate (R13, `rate_missing`)
+  # and a journal with no price for its date (R18). The second is read off
+  # `suppressed`, which DailyReturns also sets for a non-positive
+  # denominator, so a suppressed day with a positive denominator is the
+  # unpriced journal.
+  def net_contributions_understated?(anchor_date: nil, dates: nil)
+    dates = (dates || query_data.map(&:date))
+    counted_contribution_rows(anchor_date: anchor_date, through: dates.max).any? do |row|
+      row.rate_missing || (row.suppressed && row.denominator.positive?)
+    end
+  end
+
   private
     attr_reader :account_ids, :currency, :period, :favorable_direction, :account_active_until_dates
 
@@ -122,19 +139,7 @@ class Balance::ChartSeriesBuilder
     # range has its own row. Empty when the accounts have no balances on or
     # before `through`.
     def net_contributions_by_date(anchor_date:, through:)
-      first_date = first_balance_date
-      return [] if first_date.nil? || through.nil?
-
-      explicit_anchor = anchor_date.present? && anchor_date > first_date
-      start_date = explicit_anchor ? anchor_date : first_date
-      return [] if start_date > through
-
-      rows = Portfolio::DailyReturns.new(
-        account_ids: account_ids,
-        currency: currency,
-        period: Period.custom(start_date: start_date, end_date: through),
-        active_until_dates: account_active_until_dates
-      ).rows
+      rows, explicit_anchor = net_contribution_rows(anchor_date: anchor_date, through: through)
       return [] if rows.empty?
 
       first, *rest = rows
@@ -147,6 +152,37 @@ class Balance::ChartSeriesBuilder
       [ [ first.date, running ] ] + rest.map do |row|
         running += row.external_flow + row.composition_flow
         [ row.date, running ]
+      end
+    end
+
+    # The rows whose flows the line adds: all of them, except the anchor
+    # day's when an explicit anchor opens the line at that day's close.
+    def counted_contribution_rows(anchor_date:, through:)
+      rows, explicit_anchor = net_contribution_rows(anchor_date: anchor_date, through: through)
+      explicit_anchor ? rows.drop(1) : rows
+    end
+
+    # DailyReturns rows from the anchor to `through`, and whether the anchor
+    # was explicit. Memoized, so the series and the understated check share
+    # one query.
+    def net_contribution_rows(anchor_date:, through:)
+      @net_contribution_rows ||= {}
+      @net_contribution_rows[[ anchor_date, through ]] ||= begin
+        first_date = first_balance_date
+        explicit_anchor = first_date.present? && anchor_date.present? && anchor_date > first_date
+        start_date = explicit_anchor ? anchor_date : first_date
+
+        if start_date.nil? || through.nil? || start_date > through
+          [ [], explicit_anchor ]
+        else
+          rows = Portfolio::DailyReturns.new(
+            account_ids: account_ids,
+            currency: currency,
+            period: Period.custom(start_date: start_date, end_date: through),
+            active_until_dates: account_active_until_dates
+          ).rows
+          [ rows, explicit_anchor ]
+        end
       end
     end
 

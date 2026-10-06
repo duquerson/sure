@@ -491,4 +491,31 @@ class Account::ChartableTest < ActiveSupport::TestCase
     assert_equal value.values.first.value, contributions.values.first.value
     assert_equal [ 1_600, 1_900 ], contributions.values.map { |v| v.value.amount }
   end
+
+  # cubic on #337: on a coarse interval the trim date is not sampled, so the
+  # normalizer prepends a synthetic opening point (here 0) to the value line.
+  # The contributions line starts from that same point, then carries the
+  # trim day's close plus later flows, rather than opening at a different
+  # figure on the same day.
+  test "on a coarse interval a linked account's net contributions start from the value line's own opening point" do
+    day_one = Date.new(2026, 3, 2)
+    account = create_portfolio_account(family: families(:empty))
+    account.stubs(:linked?).returns(true)
+    lay_balance account: account, date: day_one, opening: 1_000, closing: 1_000
+    lay_balance account: account, date: day_one + 2, opening: 1_000, closing: 1_600, cash_flow: 500, market_flow: 100
+    lay_balance account: account, date: day_one + 10, opening: 1_600, closing: 1_900, cash_flow: 300
+    account.entries.create!(name: "Deposit", date: day_one + 2, amount: -500, currency: "USD", source: "plaid",
+                            entryable: Transaction.new(kind: "standard"))
+    deposit account: account, date: day_one + 10, amount: 300
+    period = Period.custom(start_date: day_one, end_date: day_one + 14)
+
+    value = account.balance_series(period: period, interval: "1 week")
+    contributions = account.balance_series(period: period, view: :net_contributions, interval: "1 week")
+
+    assert_equal day_one + 2, value.values.first.date, "the normalizer prepends the trim date"
+    assert_equal value.values.map(&:date), contributions.values.map(&:date)
+    assert_equal value.values.first.value, contributions.values.first.value, "both lines open at the same point"
+    assert_equal [ 0, 1_600, 1_900 ], contributions.values.map { |v| v.value.amount }
+    assert_equal 0, contributions.values[1].trend.previous.amount, "the trend follows the replaced opening point"
+  end
 end

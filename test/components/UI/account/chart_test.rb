@@ -279,6 +279,17 @@ class UI::Account::ChartTest < ViewComponent::TestCase
     refute_selector "[data-net-contributions-legend]"
   end
 
+
+  test "the chart says when net contributions are understated" do
+    @account.stubs(:net_contributions_understated?).returns(true)
+    render_inline(UI::Account::Chart.new(account: @account, view: "balance"))
+    assert_selector "[data-net-contributions-understated]"
+
+    @account.stubs(:net_contributions_understated?).returns(false)
+    render_inline(UI::Account::Chart.new(account: @account, view: "balance"))
+    refute_selector "[data-net-contributions-understated]"
+  end
+
   private
     # The two #300 stacking tests are about the family anchor, so check they
     # really got it rather than the 5-year fallback.
