@@ -51,7 +51,13 @@ class LoansController < ApplicationController
 
     def set_offset_accounts
       loan = @account&.accountable || Loan.new
-      loan.offset_account_ids ||= loan.loan_offset_accounts.pluck(:account_id) if loan.persisted?
+      offset_ids_submitted = params.dig(:account, :accountable_attributes)&.key?(:offset_account_ids)
+      if loan.persisted? && !offset_ids_submitted
+        loan.offset_account_ids ||= loan.loan_offset_accounts.pluck(:account_id)
+      end
       @offset_accounts = LoanOffsetAccount.eligible_accounts_for(loan, viewer: Current.user)
+      current_ids = Array(loan.offset_account_ids).map(&:to_s)
+      eligible_ids = @offset_accounts.map { |account| account.id.to_s }
+      @offset_accounts_allow_empty_submission = (current_ids - eligible_ids).empty?
     end
 end

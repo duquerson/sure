@@ -420,6 +420,104 @@ class LoansControllerTest < ActionDispatch::IntegrationTest
     end
   end
 
+  test "the edit form lists and pre-selects an existing eligible offset" do
+    offset = @account.family.accounts.create!(
+      name: "Existing offset", balance: 12_500, currency: @account.currency, accountable: Depository.new
+    )
+    offset.auto_share_with_family!
+    @account.loan.update!(rate_type: "variable", offset_account_ids: [ offset.id ])
+
+    get edit_loan_path(@account)
+
+    assert_select "select[name=?] option[value=?][selected]",
+      "account[accountable_attributes][offset_account_ids][]", offset.id
+  end
+
+  test "the edit form emits an explicit empty offset selection" do
+    @account.loan.update!(rate_type: "variable")
+
+    get edit_loan_path(@account)
+
+    assert_select "input[type=hidden][name=?][value='']",
+      "account[accountable_attributes][offset_account_ids][]"
+  end
+
+  test "an explicit empty offset selection removes every offset" do
+    offset = @account.family.accounts.create!(
+      name: "Removable offset", balance: 12_500, currency: @account.currency, accountable: Depository.new
+    )
+    offset.auto_share_with_family!
+    loan = @account.loan
+    loan.update!(rate_type: "adjustable", offset_account_ids: [ offset.id ])
+
+    patch loan_path(@account), params: {
+      account: {
+        accountable_attributes: {
+          id: loan.id,
+          rate_type: "variable",
+          offset_account_ids: [ "" ]
+        }
+      }
+    }
+
+    assert_redirected_to @account
+    assert_empty loan.reload.offset_accounts
+  end
+
+  test "resubmitting the form keeps existing offset join rows" do
+    offset = @account.family.accounts.create!(
+      name: "Retained offset", balance: 12_500, currency: @account.currency, accountable: Depository.new
+    )
+    offset.auto_share_with_family!
+    loan = @account.loan
+    loan.update!(rate_type: "adjustable", offset_account_ids: [ offset.id ])
+    join_id = loan.loan_offset_accounts.pick(:id)
+
+    get edit_loan_path(@account)
+    assert_select "option[value=?][selected]", offset.id
+
+    patch loan_path(@account), params: {
+      account: {
+        accountable_attributes: {
+          id: loan.id,
+          rate_type: "variable",
+          offset_account_ids: [ "", offset.id ]
+        }
+      }
+    }
+
+    assert_redirected_to @account
+    assert_equal [ join_id ], loan.reload.loan_offset_accounts.pluck(:id)
+  end
+
+  test "adding an offset through the form keeps the existing association" do
+    existing = @account.family.accounts.create!(
+      name: "Existing offset", balance: 12_500, currency: @account.currency, accountable: Depository.new
+    )
+    added = @account.family.accounts.create!(
+      name: "Added offset", balance: 8_000, currency: @account.currency, accountable: Depository.new
+    )
+    existing.auto_share_with_family!
+    added.auto_share_with_family!
+    loan = @account.loan
+    loan.update!(rate_type: "adjustable", offset_account_ids: [ existing.id ])
+    existing_join_id = loan.loan_offset_accounts.pick(:id)
+
+    patch loan_path(@account), params: {
+      account: {
+        accountable_attributes: {
+          id: loan.id,
+          rate_type: "variable",
+          offset_account_ids: [ "", existing.id, added.id ]
+        }
+      }
+    }
+
+    assert_redirected_to @account
+    assert_equal [ existing.id, added.id ].sort, loan.reload.offset_accounts.order(:id).pluck(:id)
+    assert LoanOffsetAccount.exists?(id: existing_join_id)
+  end
+
   # Open the form, change nothing, save: the link must survive even though the
   # asset would no longer be accepted fresh.
   test "an existing link stays selectable when the asset would no longer qualify" do
