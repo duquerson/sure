@@ -33,6 +33,18 @@ jobs:
           echo "Repo: ${{ github.repository }}"
           echo "Issue/PR: ${{ github.event.issue.number }}"
 
+      # Acknowledge the request straight away with a 👀 reaction on the
+      # @codebot comment. continue-on-error so a failed reaction can never
+      # block the webhook send below.
+      - name: React with eyes to the request
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api -X POST \
+            "repos/${{ github.repository }}/issues/comments/${{ github.event.comment.id }}/reactions" \
+            -f content=eyes
+
       - name: Build curated payload
         id: payload
         run: |
