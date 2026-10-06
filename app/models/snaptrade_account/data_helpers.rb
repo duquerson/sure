@@ -56,11 +56,17 @@ module SnaptradeAccount::DataHelpers
       nil
     end
 
-    def resolve_security(symbol, symbol_data)
+    # A ticker can have several Security rows (one per exchange), so the
+    # lookup must be deterministic or a holding flips between rows from one
+    # sync to the next (#333). Order: the row the account already holds, the
+    # row on SnapTrade's reported exchange, then a fixed preference order.
+    def resolve_security(symbol, symbol_data, account: nil)
       ticker = symbol.to_s.upcase.strip
       return nil if ticker.blank?
 
-      security = Security.find_by(ticker: ticker)
+      security = held_security_for(account, ticker) ||
+                 reported_exchange_security_for(ticker, symbol_data) ||
+                 preferred_security_for(ticker)
 
       # If security exists but has a bad name (looks like a hash), update it
       if security && security.name&.start_with?("{")
@@ -85,7 +91,37 @@ module SnaptradeAccount::DataHelpers
     rescue ActiveRecord::RecordInvalid, ActiveRecord::RecordNotUnique => e
       # Handle race condition - another process may have created it
       Rails.logger.error "Failed to create security #{ticker}: #{e.message}"
-      Security.find_by(ticker: ticker) # Retry find in case of race condition
+      preferred_security_for(ticker) # Retry find in case of race condition
+    end
+
+    # The row the position currently sits on, so it never moves. That includes
+    # a same-ticker remap: SnapTrade sends no external_id, so the import
+    # adapter's provider_security fallbacks never run for it. Latest date
+    # wins, provider holdings first.
+    def held_security_for(account, ticker)
+      return nil unless account
+
+      security_id = account.holdings
+        .joins(:security)
+        .where("UPPER(securities.ticker) = ?", ticker)
+        .order(date: :desc)
+        .order(Arel.sql("holdings.account_provider_id IS NULL"), :id)
+        .pick(:security_id)
+
+      security_id && Security.find_by(id: security_id)
+    end
+
+    def reported_exchange_security_for(ticker, symbol_data)
+      exchange = extract_exchange(symbol_data)
+      return nil if exchange.blank?
+
+      Security.find_by_ticker_and_exchange(ticker: ticker, exchange_operating_mic: exchange)
+    end
+
+    def preferred_security_for(ticker)
+      Security.where("UPPER(ticker) = ?", ticker)
+        .order(:offline, Arel.sql("price_provider IS NULL"), :created_at, :id)
+        .first
     end
 
     def extract_security_name(symbol_data, fallback_ticker)
