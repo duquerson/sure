@@ -209,6 +209,58 @@ class LoanOffsetAccountTest < ActiveSupport::TestCase
     assert_equal [ @offset.id ], @loan.reload.offset_accounts.pluck(:id)
   end
 
+  # --- #319: offsets are the only thing a nested save changes ----------------
+
+  test "an edit through the account that changes only the offsets links them" do
+    @offset.auto_share_with_family!
+    @loan.update!(rate_type: "variable")
+    account = Account.find(@loan.account.id)
+
+    saved = account.update(accountable_attributes: { id: @loan.id, offset_account_ids: [ @offset.id ] })
+
+    assert saved, account.errors.full_messages.to_sentence
+    assert_equal [ @offset.id ], @loan.reload.offset_accounts.pluck(:id)
+  end
+
+  # #317's version of this test also changed `interest_rate`, to get the loan
+  # validated at all.
+  test "an edit that changes the currency and only resubmits a kept offset is judged on the new currency" do
+    @offset.auto_share_with_family!
+    @loan.update!(rate_type: "variable", offset_account_ids: [ @offset.id ])
+    account = Account.find(@loan.account.id)
+
+    saved = account.update(currency: "EUR", accountable_attributes: { id: @loan.id, offset_account_ids: [ @offset.id ] })
+
+    assert_not saved
+    assert_match "must use the same currency as the loan", account.errors.full_messages.to_sentence
+    assert_equal "USD", account.reload.currency
+  end
+
+  # nil means "this save is not about offsets"; an empty list means "remove them
+  # all". Only the second may pull the loan into its account's save.
+  test "a supplied offset list counts as a change for autosave and an absent one does not" do
+    loan = Loan.find(@loan.id)
+    assert_not loan.changed_for_autosave?, "precondition"
+
+    loan.offset_account_ids = nil
+    assert_not loan.changed_for_autosave?
+
+    loan.offset_account_ids = []
+    assert loan.changed_for_autosave?
+  end
+
+  test "a nested save with no offset list leaves the loan's links alone" do
+    @offset.auto_share_with_family!
+    @loan.update!(rate_type: "variable", offset_account_ids: [ @offset.id ])
+    link_ids = @loan.loan_offset_accounts.pluck(:id)
+    account = Account.find(@loan.account.id)
+
+    saved = account.update(name: "Renamed", accountable_attributes: { id: @loan.id, offset_account_ids: nil })
+
+    assert saved, account.errors.full_messages.to_sentence
+    assert_equal link_ids, @loan.reload.loan_offset_accounts.pluck(:id)
+  end
+
   private
     def create_loan_on(family, offset:)
       family.accounts.create_and_sync(

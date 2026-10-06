@@ -544,7 +544,106 @@ class LoansControllerTest < ActionDispatch::IntegrationTest
     end
   end
 
+  # --- #319: an edit that changes only the offsets ---------------------------
+  #
+  # `offset_account_ids` is not a column, so a nested save that set nothing else
+  # left the loan unchanged and Rails' autosave skipped validating and saving it:
+  # the request redirected with the success notice and no link moved.
+
+  test "an edit that changes only the offsets links the offset" do
+    loan = @account.accountable
+    loan.update!(rate_type: "variable")
+    offset = shared_offset(balance: 12_500)
+    assert_empty loan.reload.offset_accounts, "precondition"
+    before = loan.interest_bearing_balance
+
+    assert_difference -> { loan.loan_offset_accounts.count }, 1 do
+      patch loan_path(@account), params: offset_only_params(loan, [ "", offset.id ])
+    end
+
+    assert_redirected_to @account
+    assert_equal [ offset.id ], loan.reload.offset_accounts.pluck(:id)
+    assert_equal Money.new(12_500, @account.currency), before - loan.interest_bearing_balance
+  end
+
+  test "an edit that submits an empty offset list removes the offset" do
+    loan = @account.accountable
+    offset = shared_offset
+    loan.update!(rate_type: "variable", offset_account_ids: [ offset.id ])
+    assert_equal [ offset.id ], loan.reload.offset_accounts.pluck(:id), "precondition"
+
+    assert_difference -> { loan.loan_offset_accounts.count }, -1 do
+      patch loan_path(@account), params: offset_only_params(loan, [ "" ])
+    end
+
+    assert_redirected_to @account
+    assert_empty loan.reload.offset_accounts
+  end
+
+  test "an ineligible offset submitted alone is refused, not reported as saved" do
+    loan = @account.accountable
+    loan.update!(rate_type: "variable")
+    euro = @account.family.accounts.create!(
+      name: "Euro offset", balance: 12_500, currency: "EUR", accountable: Depository.new
+    )
+    euro.auto_share_with_family!
+    assert_not_equal "EUR", @account.currency, "precondition"
+
+    assert_no_difference -> { LoanOffsetAccount.count } do
+      patch loan_path(@account), params: offset_only_params(loan, [ "", euro.id ])
+    end
+
+    assert_response :unprocessable_entity
+    assert_match "must use the same currency as the loan", response.body
+  end
+
+  # The controller pre-fills the loan's existing ids when the request carries no
+  # offset key, so with the fix this edit validates and re-syncs the links. It
+  # must keep the same join row, not drop or recreate it.
+  test "an edit with no offset key leaves the links as they were" do
+    loan = @account.accountable
+    offset = shared_offset
+    loan.update!(rate_type: "variable", offset_account_ids: [ offset.id ])
+    link_ids = loan.loan_offset_accounts.pluck(:id)
+    assert_equal 1, link_ids.size, "precondition"
+
+    patch loan_path(@account), params: { account: { name: "Renamed mortgage" } }
+
+    assert_redirected_to @account
+    assert_equal "Renamed mortgage", @account.reload.name
+    assert_equal link_ids, loan.reload.loan_offset_accounts.pluck(:id)
+  end
+
+  # Completes #290's boundary case, which #317 could only test with another loan
+  # column changing in the same request.
+  test "a currency change that resubmits the offsets and changes no loan column is judged on the new currency" do
+    loan = @account.accountable
+    offset = shared_offset
+    loan.update!(rate_type: "variable", offset_account_ids: [ offset.id ])
+
+    patch loan_path(@account), params: {
+      account: { currency: "EUR", accountable_attributes: { id: loan.id, offset_account_ids: [ "", offset.id ] } }
+    }
+
+    assert_response :unprocessable_entity
+    assert_match "must use the same currency as the loan", response.body
+    assert_equal "USD", @account.reload.currency
+    assert_equal [ offset.id ], loan.reload.offset_accounts.pluck(:id)
+  end
+
   private
+    def shared_offset(balance: 0)
+      @account.family.accounts.create!(
+        name: "Offset", balance: balance, currency: @account.currency, accountable: Depository.new
+      ).tap(&:auto_share_with_family!)
+    end
+
+    # What the edit form sends when only the offset select changed: the loan's
+    # id and its unchanged rate type, and no other loan field.
+    def offset_only_params(loan, offset_ids)
+      { account: { accountable_attributes: { id: loan.id, rate_type: loan.rate_type, offset_account_ids: offset_ids } } }
+    end
+
     def variable_loan_params(currency:, offset_ids:)
       {
         name: "Variable Loan",

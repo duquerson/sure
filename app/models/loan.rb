@@ -92,6 +92,16 @@ class Loan < ApplicationRecord
   validate :validate_offset_accounts, if: :offset_account_ids_supplied?
   after_save :sync_offset_accounts, if: :offset_accounts_need_sync?
 
+  # `offset_account_ids` is not a column, so setting it alone leaves the loan
+  # unchanged, and Account's nested save (`accepts_nested_attributes_for
+  # :accountable`) validates and saves the loan only when this is true. An edit
+  # that changed only the offsets was skipped outright: no validation, no sync,
+  # and a success notice for a link that never moved (#319). `rate_changes=`
+  # avoids the same trap by writing a real column instead.
+  def changed_for_autosave?
+    super || offset_account_ids_supplied?
+  end
+
   validates :subtype, inclusion: { in: SUBTYPES.keys }, allow_blank: true
   validates :term_months, numericality: { only_integer: true, greater_than: 0, less_than_or_equal_to: MAX_TERM_MONTHS }, allow_nil: true
   validates :interest_rate, numericality: { greater_than_or_equal_to: 0, less_than_or_equal_to: 100 }, allow_nil: true
