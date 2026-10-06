@@ -12,6 +12,8 @@ on:
 
 permissions:
   contents: write
+  # Only for the failure report below.
+  issues: write
 
 concurrency:
   group: mirror-upstream
@@ -30,6 +32,12 @@ jobs:
           # The push below uses the credential the checkout action manages;
           # the origin URL itself stays free of the token.
           persist-credentials: true
+          # GITHUB_TOKEN cannot push a commit that edits .github/workflows/,
+          # so every upstream change to a workflow file stalled the mirror
+          # (#227). MIRROR_PUSH_TOKEN is a fine-grained token on this repo
+          # with Contents and Workflows write. Without it the default token
+          # still mirrors every other day's range.
+          token: ${{ secrets.MIRROR_PUSH_TOKEN || github.token }}
 
       - name: Push we-promise/sure main to mirror/upstream-main
         shell: bash
@@ -46,3 +54,67 @@ jobs:
             lease=(--force-with-lease="refs/heads/mirror/upstream-main:${mirror_sha}")
           fi
           git push origin refs/remotes/upstream/main:refs/heads/mirror/upstream-main "${lease[@]}"
+
+      # A push that fails already fails the run, but nothing watched the run:
+      # the mirror sat four days stale before anyone noticed (#227). This
+      # checks the outcome rather than the push's exit code, so it also
+      # catches a run that "succeeded" without moving the branch.
+      - name: Confirm the mirror equals upstream main
+        shell: bash
+        run: |
+          git fetch --no-tags origin mirror/upstream-main
+          mirror="$(git rev-parse refs/remotes/origin/mirror/upstream-main)"
+          upstream="$(git rev-parse refs/remotes/upstream/main)"
+          if [ "$mirror" != "$upstream" ]; then
+            echo "::error::mirror/upstream-main is ${mirror}, upstream main is ${upstream}"
+            exit 1
+          fi
+          echo "mirror/upstream-main = upstream main = ${upstream}"
+
+      - name: Report the failure in an issue
+        if: failure()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          # The marker, not the title, identifies the report, as in
+          # upstream-sync-reminder.yml.
+          marker='<!-- mirror-upstream-failure -->'
+
+          body_file="$(mktemp)"
+          cat > "$body_file" <<EOF
+          ${marker}
+          The mirror job failed on $(date -u +%Y-%m-%d), so \`mirror/upstream-main\` may be behind we-promise/sure \`main\` and pre-flight PRs on it are being read against a stale base.
+
+          Run: ${RUN_URL}
+
+          If the log shows a push refused for a \`.github/workflows/\` file, check that the \`MIRROR_PUSH_TOKEN\` secret exists and has not expired (#227). Close this issue once a run succeeds.
+          EOF
+
+          # Only an issue this workflow opened can be the report. A lookup
+          # that fails is retried, never read as "no match": that would open a
+          # duplicate report on every failed run while the API is down.
+          lookup_ok=false
+          for wait in 0 10 30; do
+            sleep "$wait"
+            if matches="$(gh api --paginate \
+              "repos/${GH_REPO}/issues?state=open&creator=github-actions%5Bbot%5D&per_page=100" \
+              --jq ".[] | select(.pull_request | not) | select((.body // \"\") | contains(\"${marker}\")) | .number")"; then
+              lookup_ok=true
+              break
+            fi
+          done
+          if [ "$lookup_ok" != true ]; then
+            echo "::error::Could not look up an existing mirror failure issue, so none was opened or commented on. Run: ${RUN_URL}"
+            exit 1
+          fi
+          existing="${matches%%$'\n'*}"
+
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body-file "$body_file"
+            echo "commented on #${existing}"
+          else
+            gh issue create --title "The upstream mirror job failed" --body-file "$body_file"
+          fi
