@@ -614,6 +614,31 @@ class LoansControllerTest < ActionDispatch::IntegrationTest
     assert_equal link_ids, loan.reload.loan_offset_accounts.pluck(:id)
   end
 
+  # Known limitation, tracked in #329 and kept out of #319's scope by the owner:
+  # the form's multiple select has `include_hidden: false`, so deselecting every
+  # offset submits no offset key, and the controller pre-fills the existing ids.
+  # The last offset therefore cannot be removed from the form. This pins today's
+  # behaviour so #329's form change has to update it deliberately.
+  test "deselecting every offset in the edit form keeps the links (#329)" do
+    loan = @account.accountable
+    offset = shared_offset
+    loan.update!(rate_type: "variable", offset_account_ids: [ offset.id ])
+    link_ids = loan.loan_offset_accounts.pluck(:id)
+
+    get edit_loan_path(@account)
+    assert_response :success
+    assert_select "select[name=?][multiple]", "account[accountable_attributes][offset_account_ids][]"
+    assert_select "input[type=hidden][name=?]", "account[accountable_attributes][offset_account_ids][]", count: 0,
+      message: "with no hidden blank, a deselect-all submits no offset key"
+
+    patch loan_path(@account), params: {
+      account: { accountable_attributes: { id: loan.id, rate_type: loan.rate_type } }
+    }
+
+    assert_redirected_to @account
+    assert_equal link_ids, loan.reload.loan_offset_accounts.pluck(:id)
+  end
+
   # Completes #290's boundary case, which #317 could only test with another loan
   # column changing in the same request.
   test "a currency change that resubmits the offsets and changes no loan column is judged on the new currency" do
