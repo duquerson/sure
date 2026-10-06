@@ -12,6 +12,9 @@ import {
 //     remaining balance (neutral) and the actual-balance projection
 //     (green if ahead of schedule, amber if behind)
 //   - Today marker (vertical line + dot)
+//   - Optionally (#304, the Extra repayments tab) a fourth line from today:
+//     the same projection with an extra monthly payment, drawn BESIDE the
+//     no-extra projection rather than in place of it
 //
 // Data shape passed via `data-loan-payoff-chart-data-value` matches
 // Loan#payoff_chart_payload. Deliberately not a port of
@@ -108,6 +111,11 @@ export default class extends Controller {
     // *defined* as starting from today's real balance).
     const originalSeries = [lastContractedPoint, ...(data.original_projection || []).map(toPoint)];
     const acceleratedSeries = [currentBalancePoint, ...(data.accelerated_projection || []).map(toPoint)];
+    // Absent unless the payload carries one, so the Schedule tab draws exactly
+    // what it always has.
+    const extraSeries = data.extra_projection
+      ? [currentBalancePoint, ...data.extra_projection.map(toPoint)]
+      : [];
 
     if (historySeries.length < 2 && originalSeries.length < 2 && acceleratedSeries.length < 2) return;
 
@@ -115,11 +123,13 @@ export default class extends Controller {
       ...historySeries.map((d) => d.date),
       ...originalSeries.map((d) => d.date),
       ...acceleratedSeries.map((d) => d.date),
+      ...extraSeries.map((d) => d.date),
     ];
     const allBalances = [
       ...historySeries.map((d) => d.balance),
       ...originalSeries.map((d) => d.balance),
       ...acceleratedSeries.map((d) => d.balance),
+      ...extraSeries.map((d) => d.balance),
     ];
     const startDate = d3.min(allDates);
     const endDate = d3.max(allDates);
@@ -217,6 +227,7 @@ export default class extends Controller {
       svg
         .append("path")
         .datum(historySeries)
+        .attr("data-series", "history")
         .attr("fill", "none")
         .attr("stroke", textPrimary)
         .attr("stroke-width", 2)
@@ -230,6 +241,7 @@ export default class extends Controller {
       svg
         .append("path")
         .datum(originalSeries)
+        .attr("data-series", "original")
         .attr("fill", "none")
         .attr("stroke", textSecondary)
         .attr("stroke-width", 1.5)
@@ -243,11 +255,26 @@ export default class extends Controller {
       svg
         .append("path")
         .datum(acceleratedSeries)
+        .attr("data-series", "projected")
         .attr("fill", "none")
         .attr("stroke", accentColor)
         .attr("stroke-width", 2)
         .attr("stroke-linecap", "round")
         .attr("stroke-dasharray", "4 4")
+        .attr("d", line);
+    }
+
+    // Solid where the two projections are dashed, so it stays distinguishable
+    // from them by line style as well as hue.
+    if (extraSeries.length > 1) {
+      svg
+        .append("path")
+        .datum(extraSeries)
+        .attr("data-series", "extra")
+        .attr("fill", "none")
+        .attr("stroke", "var(--color-blue-600)")
+        .attr("stroke-width", 2)
+        .attr("stroke-linecap", "round")
         .attr("d", line);
     }
 
@@ -324,6 +351,8 @@ export default class extends Controller {
     tooltipOriginal.className = CHART_TOOLTIP_VALUE_CLASSES;
     const tooltipAccelerated = document.createElement("div");
     tooltipAccelerated.className = `${CHART_TOOLTIP_VALUE_CLASSES} mt-0.5`;
+    const tooltipExtra = document.createElement("div");
+    tooltipExtra.className = `${CHART_TOOLTIP_VALUE_CLASSES} mt-0.5`;
     // What the payment on the hovered date is made of. Secondary styling: the
     // balance is what the chart draws, and this is the answer to "why is it
     // moving so slowly" that the line itself cannot give (#21).
@@ -333,6 +362,7 @@ export default class extends Controller {
       tooltipDate,
       tooltipOriginal,
       tooltipAccelerated,
+      tooltipExtra,
       tooltipComposition,
     );
 
@@ -376,12 +406,18 @@ export default class extends Controller {
           ? `${(data.labels?.accelerated) || "Projected"}: ${this._fmtMoney(acceleratedPoint.balance)}`
           : "";
         tooltipAccelerated.style.display = acceleratedPoint ? "" : "none";
+        const extraPoint = nearestValue(extraSeries, hoverDate);
+        tooltipExtra.textContent = extraPoint
+          ? `${(data.labels?.extra) || "With extra"}: ${this._fmtMoney(extraPoint.balance)}`
+          : "";
+        tooltipExtra.style.display = extraPoint ? "" : "none";
       } else {
         tooltipOriginal.textContent = scheduledPoint
           ? `${(data.labels?.scheduled) || "Scheduled"}: ${this._fmtMoney(scheduledPoint.balance)}`
           : "";
         tooltipOriginal.style.display = scheduledPoint ? "" : "none";
         tooltipAccelerated.style.display = "none";
+        tooltipExtra.style.display = "none";
       }
 
       // The accelerated series is deliberately not composed (see the payload).
@@ -436,7 +472,7 @@ export default class extends Controller {
     tooltip.setAttribute("aria-live", "polite");
 
     const stopDates = Array.from(
-      new Set([ ...historySeries, ...originalSeries, ...acceleratedSeries ].map((d) => d.date.getTime()))
+      new Set([ ...historySeries, ...originalSeries, ...acceleratedSeries, ...extraSeries ].map((d) => d.date.getTime()))
     ).sort((a, b) => a - b).map((t) => new Date(t));
 
     if (stopDates.length > 0) {

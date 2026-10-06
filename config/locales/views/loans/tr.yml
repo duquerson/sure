@@ -100,14 +100,3 @@ tr:
             weekly: per week
             monthly: per month
             yearly: per year
-        extra_payment:
-          amount_label: Extra payment
-          amount_placeholder: "0.00"
-          frequency_label: Frequency
-          weekly: per week
-          monthly: per month
-          yearly: per year
-          apply: Apply
-          clear: Clear
-          approximation_notice: "Weekly and yearly amounts are converted to a monthly-equivalent figure for modeling -- this is an approximation, not a true weekly/annual payment schedule."
-          variable_rate_notice: "This loan's rate can change. The projection applies the rate changes already recorded on this loan and keeps the current repayment, so a rate change that hasn't been recorded yet will shift these figures."

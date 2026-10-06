@@ -99,7 +99,12 @@ class AccountsController < ApplicationController
       return render_schedule_tab_frame
     end
 
-    build_schedule_tab_data if schedule_tab_active?
+    if extra_repayments_tab_frame_request?
+      build_schedule_tab_data
+      return render_extra_repayments_tab_frame
+    end
+
+    build_schedule_tab_data if schedule_tab_active? || extra_repayments_tab_active?
 
     per_page = safe_per_page(stored_per_page_default)
     store_per_page!(per_page) if params[:per_page].present?
@@ -461,6 +466,14 @@ class AccountsController < ApplicationController
       render partial: "accounts/show/schedule_frame", locals: { account: @account }, layout: false
     end
 
+    def extra_repayments_tab_frame_request?
+      turbo_frame_request? && request.headers["Turbo-Frame"] == helpers.dom_id(@account, :extra_repayments_tab)
+    end
+
+    def render_extra_repayments_tab_frame
+      render partial: "accounts/show/extra_repayments_frame", locals: { account: @account }, layout: false
+    end
+
     def statement_tab_locals
       {
         account: @account,
@@ -477,6 +490,12 @@ class AccountsController < ApplicationController
 
     def schedule_tab_active?
       @tab == "schedule"
+    end
+
+    # The Extra repayments tab reads the same schedule rows as the Schedule
+    # tab, so it enqueues the same rebuild when they are stale.
+    def extra_repayments_tab_active?
+      @tab == "extra_repayments"
     end
 
     # A GET must not write.
@@ -508,20 +527,19 @@ class AccountsController < ApplicationController
     # realistic maximum.
     MAX_EXTRA_PAYMENT_AMOUNT = BigDecimal("10000000")
 
-    # Hypothetical extra-payment "what if" params for the Schedule tab's
-    # chart/cards (see Loan#payoff_chart_payload). Malformed input --
-    # missing half the pair, an unrecognized frequency, a non-finite,
-    # non-positive, unbounded, or non-numeric amount, or a param that isn't
-    # even hash-shaped -- degrades to {} (baseline projection, no
+    # Hypothetical extra-payment "what if" params for the Extra repayments
+    # tab's chart/cards (see Loan#payoff_chart_payload). One amount, paid each
+    # month (#304); a `frequency` is no longer read. Malformed input -- a
+    # non-finite, non-positive, unbounded, or non-numeric amount, or a param
+    # that isn't even hash-shaped -- degrades to {} (baseline projection, no
     # hypothesis) rather than raising, same posture as
     # Api::V1::LoansController#safe_page_param.
     def extra_payment_params
       extra_payment_value = params[:extra_payment]
       return {} unless extra_payment_value.is_a?(ActionController::Parameters) || extra_payment_value.is_a?(Hash)
 
-      raw = params.fetch(:extra_payment, {}).permit(:amount, :frequency).to_h.compact_blank
-      return {} unless raw["amount"].present? && raw["frequency"].present?
-      return {} unless Loan::PayoffProjection::EXTRA_PAYMENT_FREQUENCIES.include?(raw["frequency"])
+      raw = params.fetch(:extra_payment, {}).permit(:amount).to_h.compact_blank
+      return {} unless raw["amount"].present?
       return {} unless valid_extra_payment_amount?(raw["amount"])
 
       raw

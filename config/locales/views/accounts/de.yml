@@ -120,6 +120,7 @@ de:
         holdings: Bestände
         overview: Übersicht
         schedule: Tilgungsplan
+        extra_repayments: Sondertilgungen
         statements: Auszüge
     update:
       success: "%{type}-Konto aktualisiert"

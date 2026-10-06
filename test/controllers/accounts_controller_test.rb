@@ -1306,12 +1306,154 @@ class AccountsControllerTest < ActionDispatch::IntegrationTest
   test "a variable-rate loan gets the extra-payment control, with the rate assumption disclosed" do
     loan_account = variable_rate_loan_account
 
-    get account_url(loan_account, tab: "schedule")
+    get account_url(loan_account, tab: "extra_repayments")
 
     assert_response :success
     assert_select "input[name='extra_payment[amount]']", { count: 1 },
       "a variable-rate borrower is the one who most wants to model paying extra (#54)"
-    assert_select "p", text: I18n.t("loans.tabs.schedule.extra_payment.variable_rate_notice"), count: 1
+    assert_select "p", text: I18n.t("loans.tabs.extra_repayments.variable_rate_notice"), count: 1
+  end
+
+  # --- #304: a separate Extra repayments tab ------------------------------
+
+  test "an eligible loan has an Extra repayments tab whose frame renders a monthly-only form" do
+    loan_account = on_schedule_loan_account
+
+    get account_url(loan_account)
+    assert_response :success
+    assert_select "button[data-id='extra_repayments']", count: 1
+
+    get account_url(loan_account, tab: "extra_repayments"), headers: { "Turbo-Frame" => extra_repayments_frame_id(loan_account) }
+    assert_response :success
+    assert_select "turbo-frame##{extra_repayments_frame_id(loan_account)}" do
+      assert_select "input[name='extra_payment[amount]']", count: 1
+      assert_select "select[name='extra_payment[frequency]']", count: 0
+    end
+  end
+
+  test "the Schedule tab no longer carries the extra-payment form" do
+    get account_url(on_schedule_loan_account, tab: "schedule")
+
+    assert_response :success
+    assert_select "input[name='extra_payment[amount]']", count: 0
+  end
+
+  test "the Extra repayments chart shows the baseline for an on-schedule loan before any amount is entered" do
+    loan_account = on_schedule_loan_account
+    baseline = Loan::PayoffProjection.new(loan_account.loan)
+    assert_not baseline.diverges_from_schedule?, "test setup should be on schedule"
+
+    get account_url(loan_account, tab: "extra_repayments")
+
+    payload = extra_repayments_chart_payload
+    assert_equal baseline.payoff_date.iso8601, payload["accelerated_payoff_date"]
+    assert_not payload.key?("extra_projection")
+  end
+
+  test "an amount draws the extra line beside the baseline, with cards measured against not paying extra" do
+    loan_account = on_schedule_loan_account
+    loan_account.update!(balance: 450_000) # ahead of schedule, so the two comparisons differ
+    loan = loan_account.loan
+    baseline = Loan::PayoffProjection.new(loan)
+    extra = loan.payoff_projection_with_extra(amount: "200")
+    saved = baseline.total_interest.amount - extra.total_interest.amount
+    sooner = baseline.payment_count - extra.payment_count
+    assert_not_equal saved, extra.interest_saved, "test setup should separate the two comparisons"
+
+    get account_url(loan_account, tab: "extra_repayments", extra_payment: { amount: "200" })
+
+    assert_response :success
+    payload = extra_repayments_chart_payload
+    assert_equal baseline.payoff_date.iso8601, payload["accelerated_payoff_date"]
+    assert_equal extra.payoff_date.iso8601, payload["extra_payoff_date"]
+    assert_equal extra.payoff_date.iso8601, payload["extra_projection"].last["date"]
+
+    assert_select "[data-testid='extra-payoff-date']", text: I18n.l(extra.payoff_date, format: :long)
+    assert_select "[data-testid='extra-months-sooner']",
+      text: I18n.t("loans.tabs.extra_repayments.months_sooner", count: sooner)
+    assert_select "[data-testid='extra-interest-saved']", text: Money.new(saved, "USD").format
+  end
+
+  test "malformed amounts fall back to the baseline chart without an error" do
+    loan_account = on_schedule_loan_account
+
+    [ "", "0", "-5", "abc", "NaN", "Infinity", "1e400" ].each do |amount|
+      get account_url(loan_account, tab: "extra_repayments", extra_payment: { amount: amount })
+
+      assert_response :success, "amount #{amount.inspect} must not error"
+      payload = extra_repayments_chart_payload
+      assert_not payload.key?("extra_projection"), "amount #{amount.inspect} must not draw an extra line"
+    end
+
+    get account_url(loan_account, tab: "extra_repayments", extra_payment: "200")
+    assert_response :success
+    assert_not extra_repayments_chart_payload.key?("extra_projection")
+  end
+
+  test "modelling an extra payment mutates nothing" do
+    loan_account = on_schedule_loan_account
+    loan_account.loan.ensure_amortization_schedule_current!
+
+    assert_no_difference -> { LoanAmortization.count } do
+      assert_no_changes -> { loan_account.reload.balance } do
+        get account_url(loan_account, tab: "extra_repayments", extra_payment: { amount: "200" })
+      end
+    end
+    assert_response :success
+  end
+
+  test "no Extra repayments tab when the loan has nothing to pay off or no schedule" do
+    paid_off = on_schedule_loan_account
+    paid_off.update!(balance: 0)
+
+    get account_url(paid_off)
+    assert_response :success
+    assert_select "button[data-id='extra_repayments']", count: 0
+
+    no_rate = Account.create! \
+      family: @user.family,
+      name: "No Rate Extra Loan",
+      balance: 500000,
+      currency: "USD",
+      accountable: Loan.create!(subtype: "other", interest_rate: nil, term_months: 360, rate_type: "fixed")
+
+    get account_url(no_rate)
+    assert_response :success
+    assert_select "button[data-id='extra_repayments']", count: 0
+  end
+
+  test "a loan the current repayment never clears says what the entered extra does, not to enter one" do
+    start_date = Date.current
+    loan_account = Account.create!(
+      family: @user.family, name: "Stuck Loan", balance: 100000, currency: "USD",
+      accountable: Loan.create!(subtype: "mortgage", interest_rate: 5.0, term_months: 12, rate_type: "fixed", start_date: start_date)
+    )
+    loan_account.entries.create!(
+      name: "Starting balance", amount: 100000, currency: "USD", date: start_date,
+      entryable: Valuation.new(kind: "opening_anchor")
+    )
+    loan = loan_account.loan.tap(&:ensure_amortization_schedule_current!)
+    threshold = loan.amortization_schedule.monthly_payment.amount / (BigDecimal("5.0") / 100 / 12)
+    loan_account.update!(balance: (threshold * BigDecimal("0.995")).round(2))
+    enter_amount = I18n.t("loans.tabs.extra_repayments.projection_not_converged.enter_amount")
+    cleared = I18n.t("loans.tabs.extra_repayments.projection_not_converged.cleared_by_extra")
+
+    get account_url(loan_account, tab: "extra_repayments")
+    assert_response :success
+    assert_includes response.body, enter_amount
+
+    get account_url(loan_account, tab: "extra_repayments", extra_payment: { amount: "200000" })
+    assert_response :success
+    assert_select "[data-testid='extra-payoff-date']"
+    assert_not_includes response.body, enter_amount
+    assert_includes response.body, cleared
+  end
+
+  test "a non-loan account has no Extra repayments tab" do
+    get account_url(accounts(:depository))
+
+    assert_response :success
+    assert_select "button[data-id='extra_repayments']", count: 0
   end
 
   # --- #65: the day-count basis is disclosed, not silently assumed ---------
@@ -1482,24 +1624,24 @@ class AccountsControllerTest < ActionDispatch::IntegrationTest
     loan_account = accounts(:loan)
     assert_equal "fixed", loan_account.loan.rate_type
 
-    get account_url(loan_account, tab: "schedule")
+    get account_url(loan_account, tab: "extra_repayments")
 
     assert_response :success
     assert_select "input[name='extra_payment[amount]']", count: 1
-    assert_select "p", text: I18n.t("loans.tabs.schedule.extra_payment.variable_rate_notice"), count: 0
+    assert_select "p", text: I18n.t("loans.tabs.extra_repayments.variable_rate_notice"), count: 0
   end
 
-  test "a German variable-rate schedule has a translated extra-payment disclosure" do
+  test "a German variable-rate loan has a translated extra-payment disclosure" do
     loan_account = variable_rate_loan_account
     @user.update!(locale: "de")
 
-    get account_url(loan_account, tab: "schedule")
+    get account_url(loan_account, tab: "extra_repayments")
 
     assert_response :success
-    translated_notice = I18n.t("loans.tabs.schedule.extra_payment.variable_rate_notice", locale: :de, fallback: false)
+    translated_notice = I18n.t("loans.tabs.extra_repayments.variable_rate_notice", locale: :de, fallback: false)
     assert translated_notice.present?
     assert_select "p", text: translated_notice, count: 1
-    assert_no_match I18n.t("loans.tabs.schedule.extra_payment.variable_rate_notice", locale: :en), response.body
+    assert_no_match I18n.t("loans.tabs.extra_repayments.variable_rate_notice", locale: :en), response.body
   end
 
   # --- member-owned connections (issue #3579) ------------------------------
@@ -1636,6 +1778,43 @@ class AccountsControllerTest < ActionDispatch::IntegrationTest
       )
       account.update!(balance: 450000)
       account
+    end
+
+    # A fixed-rate loan starting today, at its original balance: exactly on its
+    # contract, so the Schedule tab's divergence gate would hide its chart.
+    def on_schedule_loan_account
+      start_date = Date.current
+      account = Account.create!(
+        family: @user.family,
+        name: "On-Schedule Loan",
+        balance: 500000,
+        currency: "USD",
+        accountable: Loan.create!(
+          subtype: "mortgage",
+          interest_rate: 3.5,
+          term_months: 360,
+          rate_type: "fixed",
+          start_date: start_date
+        )
+      )
+      account.entries.create!(
+        name: "Starting balance",
+        amount: 500000,
+        currency: "USD",
+        date: start_date,
+        entryable: Valuation.new(kind: "opening_anchor")
+      )
+      account
+    end
+
+    def extra_repayments_frame_id(account)
+      ActionView::RecordIdentifier.dom_id(account, :extra_repayments_tab)
+    end
+
+    def extra_repayments_chart_payload
+      chart = css_select("[data-controller='loan-payoff-chart']").first
+      assert chart, "the Extra repayments tab must mount the payoff chart"
+      JSON.parse(chart["data-loan-payoff-chart-data-value"])
     end
 end
 

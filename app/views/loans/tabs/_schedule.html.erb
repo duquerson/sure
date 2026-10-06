@@ -8,16 +8,9 @@
     the model, because "which row does the borrower start being charged the new
     rate on" is a question about the two rate clocks, not about this table. %>
 <% rate_change_markers = schedule.accrual_rate_change_markers(payments) %>
-<% extra_payment_params = @extra_payment_params || {} %>
-<% extra_payment_active = extra_payment_params.present? %>
-<%# Hypothetical "what if I paid extra" params (see
-    AccountsController#extra_payment_params) swap the accelerated line/cards
-    for one modeling that extra payment on top of the real current balance --
-    purely a simulation, never persisted. No what-if active falls back to the
-    plain actual-balance projection, unchanged from before this feature. %>
-<% projection = extra_payment_active ?
-     loan.payoff_projection_with_extra(amount: extra_payment_params["amount"], frequency: extra_payment_params["frequency"]) :
-     loan.payoff_projection %>
+<%# The extra-payment what-if moved to its own tab (#304); this tab shows the
+    contract against the actual-balance projection only. %>
+<% projection = loan.payoff_projection %>
 <%# A one-payment cleanup difference is the expected artifact of two
     independently-terminated simulations, not a meaningful "ahead/behind
     schedule" signal -- only show the projection once it diverges by more
@@ -63,56 +56,8 @@
     <% end %>
   </div>
 
-  <% if Loan::PayoffProjection.eligible_for_extra_payment?(loan) %>
-    <%= form_with url: account_path(account, tab: "schedule"), scope: :extra_payment, method: :get,
-                  data: { controller: "auto-submit-form" } do |f| %>
-      <div class="flex flex-wrap items-end gap-2">
-        <div class="form-field">
-          <%= f.label :amount, t(".extra_payment.amount_label"), class: "text-xs text-secondary" %>
-          <%= f.number_field :amount, value: extra_payment_params["amount"], min: 0, step: "0.01",
-                placeholder: t(".extra_payment.amount_placeholder"),
-                "data-auto-submit-form-target": "auto" %>
-        </div>
-        <div class="form-field">
-          <%= f.label :frequency, t(".extra_payment.frequency_label"), class: "text-xs text-secondary" %>
-          <%= f.select :frequency,
-                [ [ t(".extra_payment.weekly"), "weekly" ], [ t(".extra_payment.monthly"), "monthly" ], [ t(".extra_payment.yearly"), "yearly" ] ],
-                { selected: extra_payment_params["frequency"] || "monthly" },
-                "data-auto-submit-form-target": "auto" %>
-        </div>
-        <%# Auto-submit (JS) fires on change; this button is the real,
-            always-working submit control -- required for JS-disabled
-            clients and as a visible affordance rather than relying
-            entirely on auto-submit behavior. %>
-        <%= render DS::Button.new(text: t(".extra_payment.apply"), type: "submit", variant: "outline", size: "sm") %>
-        <% if extra_payment_active %>
-          <%= link_to t(".extra_payment.clear"), account_path(account, tab: "schedule"),
-                class: "text-sm text-secondary underline" %>
-        <% end %>
-      </div>
-      <p class="text-xs text-subdued mt-1"><%= t(".extra_payment.approximation_notice") %></p>
-      <%# What the projection actually does for a variable-rate loan:
-          PayoffProjection#generate_schedule passes RateResolver's accrual_rate_for
-          and re_amortisation_events to the simulator, so rate changes ALREADY
-          RECORDED on the loan are applied. payment_strategy is :hold, so the
-          repayment itself stays put. What it cannot know is a change nobody has
-          recorded yet -- which is what this notice discloses (#54). %>
-      <% if loan.variable_rate_type? %>
-        <p class="text-xs text-subdued mt-1"><%= t(".extra_payment.variable_rate_notice") %></p>
-      <% end %>
-    <% end %>
-  <% end %>
-
   <% if show_projection %>
-    <% chart_payload = loan.payoff_chart_payload(
-         projection: projection,
-         extra_payment_amount: extra_payment_params["amount"],
-         extra_payment_frequency: extra_payment_params["frequency"]
-       ) %>
-
-    <% if chart_payload && chart_payload[:extra_payment_label].present? %>
-      <p class="text-xs text-secondary"><%= chart_payload[:extra_payment_label] %></p>
-    <% end %>
+    <% chart_payload = loan.payoff_chart_payload(projection: projection) %>
 
     <div class="grid grid-cols-1 md:grid-cols-2 gap-2">
       <%= summary_card title: t(".projected_payoff_date") do %>

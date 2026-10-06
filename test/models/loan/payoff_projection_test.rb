@@ -473,6 +473,70 @@ class Loan::PayoffProjectionTest < ActiveSupport::TestCase
     assert_equal baseline.monthly_payment + Money.new(200, "USD"), boosted.monthly_payment
   end
 
+  # #304: the Extra repayments tab compares paying extra against NOT paying
+  # extra. The contract-based interest_saved answers a different question, and
+  # on a loan already ahead of schedule the two disagree -- which is the case
+  # that proves the new comparison is measuring the delta the extra buys.
+  test "interest saved versus a baseline is what the extra buys, not the distance from the contract" do
+    loan = build_loan(balance: 500000)
+    loan.account.update!(balance: 450000) # already ahead of schedule
+    as_of = Date.current
+
+    baseline = Loan::PayoffProjection.new(loan, as_of: as_of)
+    extra = loan.payoff_projection_with_extra(amount: "200", as_of: as_of)
+
+    expected = baseline.total_interest.amount - extra.total_interest.amount
+    assert_operator expected, :>, 0
+    assert_equal expected, extra.interest_saved_versus(baseline)
+    assert_not_equal extra.interest_saved, extra.interest_saved_versus(baseline),
+      "against the contract the figure also counts the $50k already paid ahead"
+
+    assert_equal baseline.payment_count - extra.payment_count, extra.months_sooner_than(baseline)
+    assert_operator extra.months_sooner_than(baseline), :>, 0
+    assert_not_equal extra.months_saved, extra.months_sooner_than(baseline)
+  end
+
+  test "a comparison against itself saves nothing" do
+    loan = build_loan(balance: 500000)
+    baseline = Loan::PayoffProjection.new(loan)
+
+    assert_equal 0, baseline.interest_saved_versus(baseline)
+    assert_equal 0, baseline.months_sooner_than(baseline)
+  end
+
+  test "the comparison is nil when either side cannot be projected" do
+    loan = loan_whose_contracted_payment_no_longer_covers_interest
+    baseline = Loan::PayoffProjection.new(loan)
+    assert_not baseline.applicable?
+
+    extra = loan.payoff_projection_with_extra(amount: "100000")
+    assert extra.applicable?, "a large enough extra makes the loan amortise"
+
+    assert_nil extra.interest_saved_versus(baseline)
+    assert_nil extra.months_sooner_than(baseline)
+  end
+
+  test "payoff_projection_with_extra models a monthly amount on the injected date" do
+    loan = build_loan(balance: 500000)
+    as_of = Date.current + 1.month
+
+    extra = loan.payoff_projection_with_extra(amount: "200", as_of: as_of)
+
+    assert_equal as_of, extra.as_of
+    assert_equal loan.amortization_schedule.monthly_payment + Money.new(200, "USD"), extra.monthly_payment
+  end
+
+  test "an extra larger than the remaining balance pays the loan off at the next payment" do
+    loan = build_loan(balance: 500000)
+
+    extra = loan.payoff_projection_with_extra(amount: "600000")
+
+    assert extra.applicable?
+    assert_equal 1, extra.payment_count
+    assert_equal 0, extra.payments.last[:ending_balance]
+    assert extra.payments.all? { |p| p[:ending_balance] >= 0 }
+  end
+
   test "a blank or zero extra payment behaves identically to no extra payment" do
     loan = build_loan(balance: 500000)
     baseline = loan.payoff_projection
