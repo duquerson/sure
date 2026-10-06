@@ -61,8 +61,101 @@ class Balance::ChartSeriesBuilder
     raise
   end
 
+  # Net contributions series (#326): for each date of the balance series, what
+  # the owner has put into these accounts so far, net of what they took out.
+  #
+  # Inception-anchored, not period-anchored: it starts from the opening value
+  # of the accounts' first balance row and adds every external flow up to the
+  # date, however early the period starts. What counts as external is decided
+  # by Portfolio::FlowClassifier with these accounts as the scope, read
+  # through Portfolio::DailyReturns so a flow is valued exactly as the returns
+  # engine values it: a deposit at its cash amount, a security journalled in
+  # at the position's value (R18), a foreign-currency flow at the previous
+  # day's rate (R11). Dividends, interest, fees, buys and sells are not
+  # external, so they never move this line.
+  #
+  # `anchor_date` is for a series whose value line starts later than its
+  # first balance row (a linked investment account trimmed to supported
+  # history): the line then opens at that day's closing value and adds only
+  # the flows after it, so both lines start from the same point.
+  #
+  # `dates` defaults to the balance series' own dates; a caller whose value
+  # line was reshaped after the query (Account::Chartable) passes that line's
+  # dates so the two are drawn on the same points.
+  #
+  # Dates before the accounts' first balance read zero, as the value line does.
+  def net_contributions_series(anchor_date: nil, dates: nil)
+    dates = (dates || query_data.map(&:date)).sort
+    cumulative = net_contributions_by_date(anchor_date: anchor_date, through: dates.max).to_h
+
+    previous = nil
+    values = dates.map do |date|
+      amount = cumulative.fetch(date, 0)
+      money = Money.new(amount, currency)
+      value = Series::Value.new(
+        date: date,
+        date_formatted: I18n.l(date, format: :long),
+        value: money,
+        trend: Trend.new(current: money, previous: previous || money, favorable_direction: favorable_direction)
+      )
+      previous = money
+      value
+    end
+
+    Series.new(
+      start_date: period.start_date,
+      end_date: period.end_date,
+      interval: interval,
+      values: values,
+      favorable_direction: favorable_direction
+    )
+  rescue => e
+    Rails.logger.error "Net contributions series error: #{e.message} for accounts #{@account_ids}"
+    raise
+  end
+
   private
     attr_reader :account_ids, :currency, :period, :favorable_direction, :account_active_until_dates
+
+    # [[date, cumulative amount], ...] for EVERY day from the anchor to
+    # `through` (DailyReturns is always daily), so any sampled date in that
+    # range has its own row. Empty when the accounts have no balances on or
+    # before `through`.
+    def net_contributions_by_date(anchor_date:, through:)
+      first_date = first_balance_date
+      return [] if first_date.nil? || through.nil?
+
+      explicit_anchor = anchor_date.present? && anchor_date > first_date
+      start_date = explicit_anchor ? anchor_date : first_date
+      return [] if start_date > through
+
+      rows = Portfolio::DailyReturns.new(
+        account_ids: account_ids,
+        currency: currency,
+        period: Period.custom(start_date: start_date, end_date: through),
+        active_until_dates: account_active_until_dates
+      ).rows
+      return [] if rows.empty?
+
+      first, *rest = rows
+      running = if explicit_anchor
+        first.value_close
+      else
+        first.value_open + first.external_flow + first.composition_flow
+      end
+
+      [ [ first.date, running ] ] + rest.map do |row|
+        running += row.external_flow + row.composition_flow
+        [ row.date, running ]
+      end
+    end
+
+    def first_balance_date
+      Balance.joins(:account)
+        .where(account_id: account_ids)
+        .where("balances.currency = accounts.currency")
+        .minimum(:date)
+    end
 
     def interval
       @interval || period.interval

@@ -1,6 +1,7 @@
 require "test_helper"
 
 class Account::ChartableTest < ActiveSupport::TestCase
+  include PortfolioReturnsTestHelper
   test "generates series and memoizes" do
     account = accounts(:depository)
 
@@ -445,5 +446,49 @@ class Account::ChartableTest < ActiveSupport::TestCase
     assert_equal early_trade_date, series.start_date
     assert_equal [ early_trade_date, 10.days.ago.to_date, Date.current ], series.values.map(&:date)
     assert_equal Money.new(0, "USD"), series.values.first.value
+  end
+
+  # #326. The view is accepted beside the others and is drawn on the value
+  # line's own dates.
+  test "balance_series accepts the net contributions view on the value line's dates" do
+    day_one = Date.new(2026, 3, 2)
+    account = create_portfolio_account(family: families(:empty))
+    lay_balance account: account, date: day_one, opening: 1_000, closing: 1_000
+    lay_balance account: account, date: day_one + 1, opening: 1_000, closing: 1_550, cash_flow: 500, market_flow: 50
+    deposit account: account, date: day_one + 1, amount: 500
+    period = Period.custom(start_date: day_one, end_date: day_one + 1)
+
+    series = account.balance_series(period: period, view: :net_contributions, interval: "1 day")
+
+    assert_equal account.balance_series(period: period, interval: "1 day").values.map(&:date), series.values.map(&:date)
+    assert_equal [ 1_000, 1_500 ], series.values.map { |v| v.value.amount }
+    assert_raises(ArgumentError) { account.balance_series(view: :contributions) }
+  end
+
+  # #326, QA review 5999950093 decision 2. A linked account's value line is
+  # trimmed to the first real broker activity, so its first balance row is not
+  # where the chart starts. The contributions line opens on the trimmed line's
+  # first date at that point's value. Anchored on the first balance row
+  # instead, it would open at 1,000 + 500 = 1,500 against a value of 1,600.
+  test "a linked account's net contributions open where its trimmed value line does" do
+    day_one = Date.new(2026, 3, 2)
+    account = create_portfolio_account(family: families(:empty))
+    account.stubs(:linked?).returns(true)
+    lay_balance account: account, date: day_one, opening: 1_000, closing: 1_000
+    lay_balance account: account, date: day_one + 1, opening: 1_000, closing: 1_000
+    lay_balance account: account, date: day_one + 2, opening: 1_000, closing: 1_600, cash_flow: 500, market_flow: 100
+    lay_balance account: account, date: day_one + 3, opening: 1_600, closing: 1_900, cash_flow: 300
+    account.entries.create!(name: "Deposit", date: day_one + 2, amount: -500, currency: "USD", source: "plaid",
+                            entryable: Transaction.new(kind: "standard"))
+    deposit account: account, date: day_one + 3, amount: 300
+    period = Period.custom(start_date: day_one, end_date: day_one + 3)
+
+    value = account.balance_series(period: period, interval: "1 day")
+    contributions = account.balance_series(period: period, view: :net_contributions, interval: "1 day")
+
+    assert_equal day_one + 2, value.values.first.date, "the value line is trimmed to the first broker activity"
+    assert_equal value.values.first.date, contributions.values.first.date
+    assert_equal value.values.first.value, contributions.values.first.value
+    assert_equal [ 1_600, 1_900 ], contributions.values.map { |v| v.value.amount }
   end
 end

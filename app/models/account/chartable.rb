@@ -43,21 +43,13 @@ module Account::Chartable
   end
 
   # Returns the chart Series for this account over the given period.
-  # Supported views: :balance, :cash_balance, :holdings_balance, :gains.
+  # Supported views: :balance, :cash_balance, :holdings_balance, :gains,
+  # :net_contributions.
   def balance_series(period: Period.last_30_days, view: :balance, interval: nil)
-    raise ArgumentError, "Invalid view type" unless [ :balance, :cash_balance, :holdings_balance, :gains ].include?(view.to_sym)
+    raise ArgumentError, "Invalid view type" unless [ :balance, :cash_balance, :holdings_balance, :gains, :net_contributions ].include?(view.to_sym)
+    return net_contributions_series(period: period, interval: interval) if view.to_sym == :net_contributions
 
-    @balance_series ||= {}
-
-    memo_key = [ period.start_date, period.end_date, interval ].compact.join("_")
-
-    builder = (@balance_series[memo_key] ||= Balance::ChartSeriesBuilder.new(
-      account_ids: [ id ],
-      currency: self.currency,
-      period: period,
-      favorable_direction: favorable_direction,
-      interval: interval
-    ))
+    builder = chart_series_builder(period: period, interval: interval)
 
     normalize_linked_investment_series(builder.send("#{view}_series"), view: view)
   end
@@ -71,6 +63,22 @@ module Account::Chartable
   end
 
   private
+    # One builder per period and interval, so the views of one chart share its
+    # memoized balance query.
+    def chart_series_builder(period:, interval:)
+      @balance_series ||= {}
+
+      memo_key = [ period.start_date, period.end_date, interval ].compact.join("_")
+
+      @balance_series[memo_key] ||= Balance::ChartSeriesBuilder.new(
+        account_ids: [ id ],
+        currency: self.currency,
+        period: period,
+        favorable_direction: favorable_direction,
+        interval: interval
+      )
+    end
+
     # Both conditions matter. Only loans, and only the "all_time" key: every
     # other period, and every other account type, is left exactly as the caller
     # asked for. Dropping either half is the bug this branch has to avoid --
@@ -86,6 +94,36 @@ module Account::Chartable
     # remove, one step earlier.
     def chart_start_date
       Balance::BaseCalculator.new(self).calculation_start_date
+    end
+
+    # Net contributions on the same dates as the Total value line (#326).
+    #
+    # The normalizer does not run on this series: it would prepend a
+    # synthetic opening point of its own. Instead the line is sampled on the
+    # value line's dates, after that line's trim. For a linked investment
+    # account whose value line is trimmed to supported history, it opens at
+    # the trim date's closing value and adds only the flows after it, so the
+    # two lines start together and the difference opens at zero. The anchor
+    # comes from the account's history, not the period, so it is the same
+    # whichever period is shown.
+    def net_contributions_series(period:, interval:)
+      value_dates = balance_series(period: period, view: :balance, interval: interval).values.map(&:date)
+      series = chart_series_builder(period: period, interval: interval)
+        .net_contributions_series(anchor_date: net_contributions_anchor_date, dates: value_dates)
+
+      Series.new(
+        start_date: value_dates.min || series.start_date,
+        end_date: series.end_date,
+        interval: series.interval,
+        values: series.values,
+        favorable_direction: series.favorable_direction
+      )
+    end
+
+    def net_contributions_anchor_date
+      return unless linked? && balance_type == :investment
+
+      Balance::LinkedInvestmentSeriesNormalizer.supported_history_start_date(self)
     end
 
     def normalize_linked_investment_series(series, view: :balance)

@@ -1,6 +1,7 @@
 require "test_helper"
 
 class UI::Account::ChartTest < ViewComponent::TestCase
+  include PortfolioReturnsTestHelper
   setup do
     @account = accounts(:investment)
     @account.holdings.destroy_all
@@ -225,6 +226,57 @@ class UI::Account::ChartTest < ViewComponent::TestCase
       "an account whose history predates the family anchor keeps the family start"
   ensure
     Current.session = nil
+  end
+
+
+  # #326. The Total value view of an account that holds trades carries the
+  # net contributions line for the chart controller, with each point's
+  # difference from total value, and a legend naming both lines.
+  test "the total value view of an investment account carries net contributions and a legend" do
+    day_one = Date.new(2026, 3, 2)
+    account = create_portfolio_account(family: families(:empty))
+    lay_balance account: account, date: day_one, opening: 10_000, closing: 10_000
+    lay_balance account: account, date: day_one + 1, opening: 10_000, closing: 15_400, cash_flow: 5_000, market_flow: 400
+    deposit account: account, date: day_one + 1, amount: 5_000
+
+    render_inline(UI::Account::Chart.new(account: account, period: Period.custom(start_date: day_one, end_date: day_one + 1), view: "balance"))
+
+    comparison = JSON.parse(page.find("#lineChart")["data-time-series-chart-comparison-value"])
+    last = comparison["values"].last
+
+    assert_equal "Net contributions", comparison["label"]
+    assert_equal [ day_one.iso8601, (day_one + 1).iso8601 ], comparison["values"].map { |v| v["date"] }
+    assert_equal "15000.0", last["value"]["amount"]
+    assert_equal "400.0", last["difference"]["value"]["amount"]
+    assert_equal 2.7, last["difference"]["percent"]
+    assert_selector "[data-net-contributions-legend]", text: "Net contributions"
+    assert_selector "[data-net-contributions-legend]", text: "Total value"
+  end
+
+  test "net contributions are not drawn on the holdings, cash or gains views" do
+    %w[holdings_balance cash_balance gains].each do |view|
+      component = UI::Account::Chart.new(account: @account, view: view)
+
+      refute component.show_net_contributions?, "#{view} must not carry net contributions"
+      render_inline(component)
+      refute_selector "[data-time-series-chart-comparison-value]"
+      refute_selector "[data-net-contributions-legend]"
+    end
+  end
+
+  test "net contributions are drawn only for accounts that hold trades" do
+    exchange = accounts(:crypto)
+    exchange.accountable.update!(subtype: "exchange")
+    assert UI::Account::Chart.new(account: exchange, view: "balance").show_net_contributions?
+
+    wallet = accounts(:crypto)
+    wallet.accountable.update!(subtype: "wallet")
+    refute UI::Account::Chart.new(account: wallet.reload, view: "balance").show_net_contributions?
+
+    depository = accounts(:depository)
+    render_inline(UI::Account::Chart.new(account: depository, view: "balance"))
+    refute_selector "[data-time-series-chart-comparison-value]"
+    refute_selector "[data-net-contributions-legend]"
   end
 
   private
