@@ -421,6 +421,157 @@ class HoldingTest < ActiveSupport::TestCase
     assert_nil @amzn.provider_security_id
   end
 
+  # ---------------------------------------------------------------------------
+  # #301 — remapping must tolerate negative qty/amount rows.
+  #
+  # Holdings are derived rows the materializer rebuilds. A full in-kind
+  # transfer out produces a row with a negative qty/amount via upsert_all
+  # (which skips validations). The old save!/update! on that row raised
+  # RecordInvalid (qty/amount must each be >= 0) and silently rolled the
+  # whole remap back — the user saw nothing change. These tests pin the
+  # corrected behaviour: the rows move, merge, or reset without the
+  # non-negative check vetoing a computed derived value.
+  # ---------------------------------------------------------------------------
+
+  test "remap_security! moves a negative-amount holding onto another security (no collision)" do
+    record_a = create_security("AAAX", prices: [ { date: 1.day.ago.to_date, price: 50.00 } ])
+    record_b = create_security("BBX", prices: [ { date: Date.current, price: 144.90 } ])
+
+    # Buy on record_a on a different date than record_b's row -> no (date,cur) collision
+    create_trade(record_a, account: @account, qty: 22, price: 50.00, date: 1.day.ago.to_date)
+    @account.holdings.create!(
+      security: record_a,
+      date: 1.day.ago.to_date,
+      qty: 22,
+      price: 50.00,
+      amount: 1100.0,
+      currency: "USD"
+    )
+
+    # Record_b's row is NEGATIVE (materializer-style row written via upsert_all,
+    # which skips the >=0 validation), on Date.current
+    neg = @account.holdings.create!(
+      security: record_b,
+      date: Date.current,
+      qty: 22,
+      price: 144.905,
+      amount: 3187.91,
+      currency: "USD"
+    )
+    neg.update_columns(qty: -22, amount: BigDecimal("-3187.80"))
+
+    # The old code raised ActiveRecord::RecordInvalid here and rolled back.
+    neg_holding = @account.holdings.find_by(security: record_b, date: Date.current)
+    neg_holding.remap_security!(record_a)
+
+    # The negative row moved onto record_a, untouched by the >=0 validation.
+    assert_equal 0, @account.holdings.where(security: record_b).count,
+      "record_b's negative row should have moved onto record_a"
+    row = @account.holdings.find_by(security: record_a, date: Date.current)
+    refute_nil row, "a record_a row should exist on Date.current (the moved negative row)"
+    assert_equal BigDecimal("-22"), row.qty
+    assert_equal BigDecimal("-3187.80"), row.amount
+    assert row.security_locked?
+    assert_equal record_b.id, row.provider_security_id
+
+    # Record_a's buy trade was moved to record_a (already there, still present)
+    assert_equal 1, @account.trades.where(security: record_a).count
+  end
+
+  test "remap_security! merges a holding into a negative target without raising (collision)" do
+    new_security = create_security("GOOGNEG", prices: [ { date: Date.current, price: 100.0 } ])
+
+    # Negative target row on Date.current (materializer-style)
+    target = @account.holdings.create!(
+      date: Date.current,
+      security: new_security,
+      qty: 0,
+      price: 100.0,
+      amount: 0.0,
+      currency: "USD"
+    )
+    target.update_columns(qty: -22, amount: -4000.0)
+
+    amzn_security = @amzn.security
+    initial_count = @account.holdings.count
+
+    # Old code: existing.update!(merge_attrs) raised RecordInvalid (merged amount negative)
+    @amzn.remap_security!(new_security)
+
+    # The moved AMZN row was merged in and destroyed -> one row fewer.
+    assert_equal initial_count - 1, @account.holdings.count
+    assert_equal 0, @account.holdings.where(security: amzn_security).count,
+      "no AMZN rows should remain after the merge"
+    target.reload
+    # Merged quantity absorbed the moved row's 15, target kept the -22 -> net -7
+    # (still negative, which the old save!/update! rejected).
+    assert_equal BigDecimal("-7"), target.qty
+    # -4000 + the moved row's 3240 -> -760: the merged amount is negative too.
+    assert_equal BigDecimal("-760"), target.amount
+    assert target.security_locked?, "merged row should be locked"
+  end
+
+  test "reset_security_to_provider! moves a negative-qty holding back without raising" do
+    old_security = @amzn.security
+    new_security = create_security("GOOG301", prices: [ { date: Date.current, price: 100.0 } ])
+
+    @amzn.remap_security!(new_security)
+    assert_equal new_security.id, @amzn.security_id
+
+    # Force the (already-moved) holding into a negative state the materializer
+    # would produce, bypassing validation.
+    @amzn.update_columns(qty: -22, amount: BigDecimal("-3187.80"))
+
+    # Old code: holding.update! raised RecordInvalid and rolled the reset back.
+    @amzn.reset_security_to_provider!
+
+    @amzn.reload
+    assert_equal old_security.id, @amzn.security_id,
+      "the negative holding should have moved back to the provider security"
+    assert_not @amzn.security_locked?
+    assert_nil @amzn.provider_security_id
+  end
+
+  # #314 review (cubic): update_columns does not touch updated_at, and
+  # InvestmentStatement#holdings_version keys cached series on the newest
+  # holdings.updated_at. Each write a remap or reset makes must move it.
+  test "remap_security! bumps updated_at on a moved holding" do
+    new_security = create_security("GOOGTS", prices: [ { date: Date.current, price: 100.0 } ])
+    @account.holdings.update_all(updated_at: 2.days.ago)
+    before = @account.holdings.maximum(:updated_at)
+
+    @amzn.remap_security!(new_security)
+
+    moved = @account.holdings.where(security: new_security)
+    assert_equal 2, moved.count
+    moved.each { |h| assert_operator h.updated_at, :>, before }
+  end
+
+  test "remap_security! bumps updated_at on the row it merges into" do
+    new_security = create_security("GOOGTM", prices: [ { date: Date.current, price: 100.0 } ])
+    target = @account.holdings.create!(security: new_security, date: @amzn.date, qty: 1, price: 100.0, amount: 100.0, currency: @amzn.currency)
+    @account.holdings.update_all(updated_at: 2.days.ago)
+    before = target.reload.updated_at
+
+    @amzn.remap_security!(new_security)
+
+    assert_operator target.reload.updated_at, :>, before
+  end
+
+  test "reset_security_to_provider! bumps updated_at on the holdings it moves back" do
+    old_security = @amzn.security
+    new_security = create_security("GOOGTR", prices: [ { date: Date.current, price: 100.0 } ])
+    @amzn.remap_security!(new_security)
+    @account.holdings.update_all(updated_at: 2.days.ago)
+    before = @account.holdings.maximum(:updated_at)
+
+    @amzn.reset_security_to_provider!
+
+    reset = @account.holdings.where(security: old_security)
+    assert_equal 2, reset.count
+    reset.each { |h| assert_operator h.updated_at, :>, before }
+  end
+
   private
 
     def load_holdings

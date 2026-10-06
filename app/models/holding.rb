@@ -267,14 +267,45 @@ class Holding < ApplicationRecord
           merge_attrs[:account_provider_id] ||= holding.account_provider_id if existing.account_provider_id.blank? && holding.account_provider_id.present?
           merge_attrs[:security_locked] = true # Lock merged holding to prevent provider overwrites
 
-          existing.update!(merge_attrs)
+          # Merge the moved row into the existing one, then delete the moved
+          # row so the (account, security, date, currency) unique pair stays
+          # single. The merge keeps the existing row and absorbs qty/amount
+          # from the moved row; destroying the moved row (never the existing)
+          # also satisfies the DB unique constraint on that pair.
+          #
+          # Bypass validations (QA note #3): the merged qty/amount may be
+          # negative — that is exactly the case #301 is about (a +22 row on one
+          # record and a -22 row on another merging to a row the >=0 check
+          # would reject). It is a derived value the materializer recomputes,
+          # so validate-and-reject is the wrong tool here. update_columns
+          # also writes only the columns listed, so a merged amount is never
+          # validated. The original save!/update! raised RecordInvalid on
+          # exactly this and rolled the whole remap back.
+          #
+          # update_columns does not touch updated_at, and cached investment
+          # series key on the newest holdings.updated_at
+          # (InvestmentStatement#holdings_version), so it is set here.
+          existing.update_columns(merge_attrs.merge(updated_at: Time.current))
           holding.destroy!
         else
-          # No collision: update to new security
-          holding.provider_security_id ||= old_security.id
-          holding.security = new_security
-          holding.security_locked = true
-          holding.save!
+          # No collision: update to new security.
+          #
+          # Write only the columns this remap owns, bypassing validations
+          # (QA note #3). Holdings are derived rows the materializer rebuilds:
+          # straight after this the controller re-materializes on the new
+          # security and the forward calculator regenerates qty/amount/price.
+          # The >=0 validations on qty/amount exist to stop a *user* from typing
+          # a negative value into an ordinary edit — they must not veto moving a
+          # computed derived row that legitimately carries a negative qty/amount
+          # (e.g. a full in-kind transfer out). Using save! here raised
+          # RecordInvalid on exactly that case and silently rolled the whole
+          # remap back — #301.
+          holding.update_columns(
+            security_id: new_security.id,
+            security_locked: true,
+            provider_security_id: holding.provider_security_id || old_security.id,
+            updated_at: Time.current
+          )
         end
       end
 
@@ -310,11 +341,18 @@ class Holding < ApplicationRecord
       account.trades.where(security: current_security).update_all(security_id: original_security.id)
 
       # Reset ALL holdings that were remapped from this provider_security
+      # (QA note #3): write only the columns this reset owns, bypassing
+      # validations. Same rationale as remap_security! — these are derived
+      # rows the materializer rebuilds, and a negative qty/amount must not
+      # stop them moving back to the provider's original security. The
+      # original holding.update! raised RecordInvalid on exactly that and
+      # rolled the whole reset back.
       account.holdings.where(security: current_security, provider_security: original_security).find_each do |holding|
-        holding.update!(
-          security: original_security,
+        holding.update_columns(
+          security_id: original_security.id,
           security_locked: false,
-          provider_security_id: nil
+          provider_security_id: nil,
+          updated_at: Time.current
         )
       end
     end
