@@ -307,6 +307,17 @@ class GoalsControllerTest < ActionDispatch::IntegrationTest
     assert_equal "balance", @goal.reload.progress_basis
   end
 
+  test "update refuses a basis change on a completed goal" do
+    @goal.complete!
+    snapshot = @goal.reload.completed_amount
+
+    patch goal_url(@goal), params: { goal: { progress_basis: "contributions" } }
+
+    assert_response :unprocessable_entity
+    assert_equal "balance", @goal.reload.progress_basis
+    assert_equal snapshot, @goal.completed_amount
+  end
+
   test "the basis of another family's goal cannot be changed" do
     other_family = families(:empty)
     account = Account.create!(family: other_family, accountable: Depository.new, name: "Theirs", currency: "USD", balance: 500)

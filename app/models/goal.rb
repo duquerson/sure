@@ -71,6 +71,7 @@ class Goal < ApplicationRecord
   validate :currency_locked_once_linked
   validate :restore_must_not_recreate_whole_account_conflict
   validate :kind_locked_while_released
+  validate :progress_basis_locked_once_completed
   validate :kind_locked_once_consumed
   validate :target_must_cover_what_was_consumed
   # A reserve has no deadline. Normalising here rather than rejecting: the form
@@ -1390,6 +1391,20 @@ class Goal < ApplicationRecord
       return unless state_in_database.in?(RELEASED_STATES)
 
       errors.add(:kind, :locked_while_released)
+    end
+
+    # A completed goal reports `completed_amount`, frozen on the basis it had
+    # when it closed. Switching basis afterwards would label that figure with
+    # the other basis, so the switch waits for a reopen, which thaws the
+    # snapshot. The persisted snapshot, for the reason kind_locked_while_released
+    # reads the persisted state: a write that also sets `state: "active"` skips
+    # the transition that clears it. An archived goal that never completed has
+    # no snapshot and reports the live figure, so its basis stays editable.
+    def progress_basis_locked_once_completed
+      return unless persisted? && will_save_change_to_progress_basis?
+      return if completed_amount_in_database.nil?
+
+      errors.add(:progress_basis, :locked_once_completed)
     end
 
     def clear_target_date_for_maintained

@@ -958,6 +958,64 @@ class GoalTest < ActiveSupport::TestCase
     assert_equal on_market_value, back_on_market_value
   end
 
+  # A completed goal reports the amount frozen when it closed, measured on the
+  # basis it had then. Switching basis afterwards would put the new label on
+  # the old figure, so the switch is refused until the goal is reopened.
+  test "a completed goal refuses a basis change and keeps its snapshot" do
+    account = Account.create!(family: @family, accountable: Investment.new, name: "Brokerage C", currency: "USD", balance: 10_000)
+    account.balances.create!(date: 10.days.ago.to_date, balance: 10_000, currency: "USD", net_market_flows: 3_000)
+    goal = @family.goals.create!(name: "Closed invest", target_amount: 20_000, currency: "USD", progress_basis: "contributions") do |g|
+      g.goal_accounts.build(account: account)
+    end
+    goal.complete!
+    snapshot = goal.reload.completed_amount
+    assert_equal BigDecimal("7000"), snapshot.to_d
+
+    assert_not goal.update(progress_basis: "balance")
+    assert goal.errors.of_kind?(:progress_basis, :locked_once_completed)
+    assert_equal "contributions", goal.reload.progress_basis
+    assert_equal snapshot, goal.completed_amount
+  end
+
+  # Reopening in the same write must not slip the change through: the persisted
+  # snapshot is what the lock reads, as kind_locked_while_released does.
+  test "a completed goal refuses a basis change written alongside state active" do
+    goal = goals(:emergency_fund)
+    goal.complete!
+
+    assert_not goal.update(state: "active", progress_basis: "contributions")
+    assert goal.errors.of_kind?(:progress_basis, :locked_once_completed)
+    assert_equal "balance", goal.reload.progress_basis
+  end
+
+  # The edit form resubmits the basis the goal already has, so an ordinary edit
+  # of a completed goal must not trip the lock.
+  test "a completed goal still saves an edit that resubmits its own basis" do
+    goal = goals(:emergency_fund)
+    goal.complete!
+
+    assert goal.update(name: "Fund, done", progress_basis: "balance")
+    assert_equal "Fund, done", goal.reload.name
+  end
+
+  test "an archived goal that never completed can still change basis" do
+    goal = goals(:emergency_fund)
+    goal.archive!
+    assert_nil goal.reload.completed_amount
+
+    assert goal.update(progress_basis: "contributions")
+    assert_equal "contributions", goal.reload.progress_basis
+  end
+
+  test "reopening a completed goal frees its basis again" do
+    goal = goals(:emergency_fund)
+    goal.complete!
+    goal.reopen!
+
+    assert goal.update(progress_basis: "contributions")
+    assert_equal "contributions", goal.reload.progress_basis
+  end
+
   test "earmark is respected on a contributions-basis goal" do
     account = Account.create!(family: @family, accountable: Investment.new, name: "Brokerage2", currency: "USD", balance: 10_000)
     account.balances.create!(date: 5.days.ago.to_date, balance: 10_000, currency: "USD", net_market_flows: 2_000)
