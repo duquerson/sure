@@ -30,6 +30,7 @@ class Demo::GeneratorTest < ActiveSupport::TestCase
   end
 
   test "sample data generates loan payments before its transaction commits" do
+    skip "Fork keeps its own demo loans (#184; generator.rb taken fork-side in #232/#272): they carry no terms and pay flat figures, so there is no schedule to match. Kept, not dropped, pending the owner's call on porting upstream's schedule-driven demo loans."
     generator = Demo::Generator.new(seed: 42)
     stub_non_loan_activity(generator)
     @family.expects(:sync_later)
@@ -40,6 +41,7 @@ class Demo::GeneratorTest < ActiveSupport::TestCase
   end
 
   test "default demo generates loan payments inside a refresh transaction" do
+    skip "Fork keeps its own demo loans (#184; generator.rb taken fork-side in #232/#272): they carry no terms and pay flat figures, so there is no schedule to match. Kept, not dropped, pending the owner's call on porting upstream's schedule-driven demo loans."
     generator = Demo::Generator.new(seed: 42)
     generator.stubs(:create_family_and_users!).returns(@family)
     generator.stubs(:create_monitoring_api_key!)
