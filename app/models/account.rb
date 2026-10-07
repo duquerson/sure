@@ -7,6 +7,13 @@ class Account < ApplicationRecord
   before_destroy :cleanup_transfers
 
   after_destroy_commit :move_account_statements_to_inbox
+  # A loan offset link must keep both sides in one currency (#328). The form,
+  # a model call and provider syncs all change currency through a save, so a
+  # hook here sees every route. after_update, not after_commit: the account
+  # form saves again in the same transaction (`lock_saved_attributes!`), and by
+  # commit `saved_change_to_currency?` describes that later save. Inside the
+  # transaction, a rollback takes the removal back with the currency change.
+  after_update :invalidate_loan_offset_links_on_currency_change, if: :saved_change_to_currency?
 
   validates :name, :balance, :currency, presence: true
   validate :owner_belongs_to_family, if: -> { owner_id.present? && family_id.present? }
@@ -783,6 +790,10 @@ class Account < ApplicationRecord
 
     def capture_account_statement_ids_to_move
       @statement_ids_to_move = account_statements.ids
+    end
+
+    def invalidate_loan_offset_links_on_currency_change
+      LoanOffsetAccount.invalidate_for_currency_change!(self)
     end
 
     def move_account_statements_to_inbox

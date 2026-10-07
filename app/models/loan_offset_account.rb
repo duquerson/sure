@@ -27,6 +27,40 @@ class LoanOffsetAccount < ApplicationRecord
       loan_ids = Account.where(id: account.id, accountable_type: "Loan").select(:accountable_id)
       where(account_id: account.id).or(where(loan_id: loan_ids)).find_each(&:destroy!)
     end
+
+    # A link is judged on currency only when it is created or resubmitted, so a
+    # later currency change on either side left a cross-currency link that the
+    # loan then subtracted at face value (#328). Unlike the sharing path, only
+    # the links whose two sides now differ go: a change that brings a link back
+    # into line keeps it. Each removal is logged, because a provider sync can
+    # make the change with nobody watching.
+    def invalidate_for_currency_change!(account)
+      return if account.nil?
+
+      loan_ids = Account.where(id: account.id, accountable_type: "Loan").select(:accountable_id)
+      where(account_id: account.id).or(where(loan_id: loan_ids))
+        .includes(:account, loan: :account)
+        .find_each do |link|
+          loan_account = link.loan.account
+          next if loan_account.nil? || link.account.currency == loan_account.currency
+
+          link.destroy!
+          DebugLogEntry.capture(
+            category: "loan_offset",
+            level: "warn",
+            message: "Removed a loan offset link after a currency change",
+            source: name,
+            family_id: loan_account.family_id,
+            metadata: {
+              loan_id: link.loan_id,
+              loan_account_id: loan_account.id,
+              offset_account_id: link.account_id,
+              offset_currency: link.account.currency,
+              loan_currency: loan_account.currency
+            }
+          )
+        end
+    end
   end
 
   private

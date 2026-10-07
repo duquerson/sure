@@ -656,6 +656,47 @@ class LoansControllerTest < ActionDispatch::IntegrationTest
     assert_equal [ offset.id ], loan.reload.offset_accounts.pluck(:id)
   end
 
+  # #328: moving the offset into another currency from its own edit form used
+  # to keep the link, and every later save of the loan form then failed on it.
+  test "an offset moved to another currency is unlinked, and the loan form saves again" do
+    loan = @account.loan
+    offset = shared_offset(balance: 1_000)
+    loan.update!(rate_type: "variable", offset_account_ids: [ offset.id ])
+
+    patch depository_path(offset), params: { account: { currency: "EUR" } }
+    assert_equal "EUR", offset.reload.currency
+    assert_empty loan.reload.offset_accounts
+
+    patch loan_path(@account), params: { account: { name: "Renamed mortgage" } }
+    assert_redirected_to @account
+    assert_equal "Renamed mortgage", @account.reload.name
+  end
+
+  # The views ask whether the loan has an offset; a stranded link is not one.
+  test "the loan page does not present a stranded offset as an offset" do
+    loan = @account.loan
+    offset = shared_offset(balance: 1_000)
+    loan.update!(rate_type: "variable", offset_account_ids: [ offset.id ])
+
+    get account_url(@account, tab: "overview")
+    assert_response :success
+    assert_includes response.body, "Variable + offset", "precondition: a matching offset is presented"
+    get account_url(@account, tab: "schedule")
+    assert_response :success
+    assert_includes response.body, "linked offset balance", "precondition: a matching offset is presented"
+
+    offset.update_columns(currency: "EUR")
+
+    # A crashed tab renders an error page without either phrase, so the
+    # absence below means something only on a page that rendered.
+    get account_url(@account, tab: "overview")
+    assert_response :success
+    assert_not_includes response.body, "Variable + offset"
+    get account_url(@account, tab: "schedule")
+    assert_response :success
+    assert_not_includes response.body, "linked offset balance"
+  end
+
   private
     def shared_offset(balance: 0)
       @account.family.accounts.create!(
