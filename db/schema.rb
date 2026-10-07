@@ -813,6 +813,30 @@ ActiveRecord::Schema[8.1].define(version: 2026_10_07_090000) do
     t.index ["tags"], name: "index_eval_samples_on_tags", using: :gin
   end
 
+  create_table "event_transactions", id: :uuid, default: -> { "gen_random_uuid()" }, force: :cascade do |t|
+    t.datetime "created_at", null: false
+    t.uuid "event_id", null: false
+    t.string "inclusion", null: false
+    t.uuid "transaction_id", null: false
+    t.datetime "updated_at", null: false
+    t.index ["event_id", "transaction_id"], name: "index_event_transactions_on_event_and_transaction", unique: true
+    t.index ["event_id"], name: "index_event_transactions_on_event_id"
+    t.index ["transaction_id"], name: "index_event_transactions_on_transaction_id"
+    t.check_constraint "inclusion::text = ANY (ARRAY['included'::character varying, 'excluded'::character varying]::text[])", name: "chk_event_transactions_inclusion"
+  end
+
+  create_table "events", id: :uuid, default: -> { "gen_random_uuid()" }, force: :cascade do |t|
+    t.string "color", default: "#6471eb", null: false
+    t.datetime "created_at", null: false
+    t.date "end_date", null: false
+    t.uuid "family_id", null: false
+    t.string "name", null: false
+    t.date "start_date", null: false
+    t.datetime "updated_at", null: false
+    t.index ["family_id"], name: "index_events_on_family_id"
+    t.check_constraint "end_date >= start_date", name: "chk_events_date_order"
+  end
+
   create_table "exchange_rate_pairs", id: :uuid, default: -> { "gen_random_uuid()" }, force: :cascade do |t|
     t.datetime "created_at", null: false
     t.date "first_provider_rate_on"
@@ -3158,6 +3182,9 @@ ActiveRecord::Schema[8.1].define(version: 2026_10_07_090000) do
   add_foreign_key "eval_results", "eval_samples"
   add_foreign_key "eval_runs", "eval_datasets"
   add_foreign_key "eval_samples", "eval_datasets"
+  add_foreign_key "event_transactions", "events", on_delete: :cascade
+  add_foreign_key "event_transactions", "transactions", on_delete: :cascade
+  add_foreign_key "events", "families"
   add_foreign_key "family_documents", "families"
   add_foreign_key "family_exports", "families"
   add_foreign_key "family_merchant_associations", "families"

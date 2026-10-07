@@ -336,6 +336,7 @@ Rails.application.routes.draw do
   get "feedback", to: "pages#feedback"
   get "dashboard/cash_flow", to: "cash_flows#show", as: :dashboard_cash_flow
   patch "dashboard/preferences", to: "pages#update_preferences"
+  patch "dashboard/sections/:section_key/hidden", to: "pages#update_section_hidden", as: :dashboard_section_hidden
 
   resource :current_session, only: %i[update]
 
@@ -450,6 +451,17 @@ Rails.application.routes.draw do
     get :google_sheets_instructions, on: :collection
     get :print, on: :collection
     get :picker, on: :collection
+  end
+
+  # Dated lenses over spending, e.g. "what did the Bali trip cost?" (#130, 11.2).
+  # Preview-gated in the controller. Overrides are three small writes on the
+  # event rather than a nested resource: they carry no page of their own.
+  resources :events do
+    member do
+      post :include_transaction
+      post :exclude_transaction
+      delete :reset_transaction
+    end
   end
 
   # Hub page fronting budgets + goals under a single "Plan" nav entry.
@@ -1041,6 +1053,7 @@ Rails.application.routes.draw do
     # so name it explicitly.
     resource :system_health, only: :show, controller: "system_health" do
       get :ai_status
+      get :hosted_usage
       post :verify_worker_ai
       post :send_test_push
     end
