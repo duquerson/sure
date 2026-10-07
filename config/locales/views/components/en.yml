@@ -82,6 +82,10 @@ en:
           start_principal: The principal balance at the beginning of this day
           start_value: The asset value at the beginning of this day
       chart:
+        net_contributions:
+          difference: Difference
+          label: Net contributions
+          understated: Some money moved in or out could not be valued, so net contributions are understated from that date.
         no_data_available: "No data available"
         title:
           balance: Balance
