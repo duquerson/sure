@@ -154,7 +154,7 @@ class UI::Loan::RateChangeTable < ApplicationComponent
     # by construction, so asking per row was a query per row for an answer that
     # cannot change between them (Codacy, #79).
     def offset_total
-      @offset_total ||= BigDecimal(loan.offset_accounts.sum(:balance).to_s)
+      @offset_total ||= BigDecimal(loan.countable_offset_accounts.sum(:balance).to_s)
     end
 
     # From today's actual balance forward -- see the note at the top of this

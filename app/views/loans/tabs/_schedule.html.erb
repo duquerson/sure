@@ -126,7 +126,7 @@
       already in effect is the current rate, not news. %>
   <%= render UI::Loan::RateChangeTable.new(loan: loan, as_of: today) %>
 
-  <% if loan.offset_accounts.any? %>
+  <% if loan.countable_offset_accounts.any? %>
     <p class="text-sm text-secondary">
       <%= t(".offset_notice") %>
     </p>

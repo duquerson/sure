@@ -504,11 +504,22 @@ class Loan < ApplicationRecord
     Money.new(payment, account.currency)
   end
 
+  # The offset accounts whose balances count against this loan: those in the
+  # loan account's currency. A link in another currency is removed when either
+  # side's currency changes (#328), but one stranded by any other route must
+  # still never be subtracted at face value, so every reader of offset
+  # balances goes through here rather than `offset_accounts`.
+  def countable_offset_accounts
+    return Account.none if account.nil?
+
+    offset_accounts.where(currency: account.currency)
+  end
+
   # Today's balance net of any linked offset, floored at zero: the balance
   # interest is actually charged on, which is what the repayment must clear.
   def interest_bearing_balance
     gross = BigDecimal(account.balance.to_s)
-    offset = offset_accounts.sum(:balance)
+    offset = countable_offset_accounts.sum(:balance)
     Money.new([ gross - BigDecimal(offset.to_s), BigDecimal("0") ].max, account.currency)
   end
 

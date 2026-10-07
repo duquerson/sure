@@ -8,7 +8,7 @@ class Loan
     end
 
     def change_points(from_date, to_date)
-      return [] unless @loan.offset_accounts.exists?
+      return [] unless @loan.countable_offset_accounts.exists?
       return [] if from_date >= to_date
 
       today = Date.current
@@ -25,7 +25,7 @@ class Loan
     private
 
       def offset_accounts
-        @offset_accounts ||= @loan.offset_accounts.to_a
+        @offset_accounts ||= @loan.countable_offset_accounts.to_a
       end
 
       def current_total

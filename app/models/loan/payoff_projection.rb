@@ -437,7 +437,7 @@ class Loan
       # Today's linked-offset total, summed once per projection and held flat
       # for its life -- the assumption the rate-change table's caption states.
       def offset_total
-        @offset_total ||= BigDecimal(loan.offset_accounts.sum(:balance).to_s)
+        @offset_total ||= BigDecimal(loan.countable_offset_accounts.sum(:balance).to_s)
       end
 
       # Runs the simulation. Everything above decides WHAT to feed the simulator;
@@ -486,7 +486,7 @@ class Loan
           # by changing the calculation mode.
           daily_accrual: Loan::AmortizationSchedule::SCHEDULE_DAILY_ACCRUAL ||
             assumed_offset_balance.present? ||
-            (loan.offset_accounts.any? && loan.offset_accounts.sum(:balance).positive?),
+            (loan.countable_offset_accounts.any? && loan.countable_offset_accounts.sum(:balance).positive?),
           day_count_convention: loan.day_count_convention,
           offset_for: offset_resolver,
           extra_for: extra_repayment_resolver
