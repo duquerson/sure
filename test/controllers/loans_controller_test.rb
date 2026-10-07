@@ -695,6 +695,39 @@ class LoansControllerTest < ActionDispatch::IntegrationTest
     assert_match "must use the same currency as the loan", response.body
   end
 
+  test "saving a loan removes its stale offset link when the offset is unlisted" do
+    loan = @account.accountable
+    offset = shared_offset
+    loan.update!(rate_type: "variable", offset_account_ids: [ offset.id ])
+    assert_equal [ offset.id ], loan.reload.offset_accounts.pluck(:id), "precondition"
+
+    # Simulate a legacy link left behind by a currency change before #340's
+    # cleanup callback existed. It no longer appears among eligible options.
+    offset.update_columns(currency: "EUR")
+
+    get edit_loan_path(@account)
+
+    assert_response :success
+    assert_select "select[name=?] option[value=?]",
+      "account[accountable_attributes][offset_account_ids][]", offset.id, count: 0
+    assert_select "input[type=hidden][name=?][value='']",
+      "account[accountable_attributes][offset_account_ids][]"
+
+    assert_difference -> { loan.loan_offset_accounts.count }, -1 do
+      patch loan_path(@account), params: {
+        account: {
+          name: "Renamed mortgage",
+          accountable_attributes: { id: loan.id, rate_type: loan.rate_type, offset_account_ids: [ "" ] }
+        }
+      }
+    end
+
+    assert_response :found
+    assert_redirected_to @account
+    assert_equal "Renamed mortgage", @account.reload.name
+    assert_empty loan.reload.offset_accounts
+  end
+
   # The controller pre-fills the loan's existing ids when the request carries no
   # offset key, so with the fix this edit validates and re-syncs the links. It
   # must keep the same join row, not drop or recreate it.
