@@ -1019,12 +1019,14 @@ class Loan < ApplicationRecord
 
     # Offset BALANCES, not just which accounts are linked: an offset changes the
     # interest charged, so a projection must be recreated when one moves even
-    # though nothing about the loan or its links has changed.
+    # though nothing about the loan or its links has changed. Currencies too:
+    # they decide which offsets count (`countable_offset_accounts`), so a
+    # stranded link must rebuild the projection even while it survives (#328).
     def offset_account_signature
       LoanOffsetAccount.joins(:account)
         .where(loan_id: id)
         .order(:account_id)
-        .pluck(:account_id, "accounts.balance")
+        .pluck(:account_id, "accounts.balance", "accounts.currency")
     end
 
     # Guards the jsonb column's shape at the model layer -- dates parseable,

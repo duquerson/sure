@@ -58,6 +58,30 @@ class LoanOffsetAccountCurrencyChangeTest < ActiveSupport::TestCase
     assert_not_equal projection_before, @loan.payoff_projection.total_interest
   end
 
+  # A stranded link that survives (no hook ran) must still stop counting on a
+  # loan already in memory: the memoised projection's signature has to see
+  # the currency, not only the offset ids and balances.
+  test "a loaded loan's projection drops an offset stranded without the hook" do
+    projection_before = @loan.payoff_projection.total_interest
+
+    @offset.update_columns(currency: "EUR")
+
+    assert_equal [ @offset.id ], @loan.loan_offset_accounts.pluck(:account_id), "precondition: the link survives"
+    assert_equal Loan.find(@loan.id).payoff_projection.total_interest, @loan.payoff_projection.total_interest
+    assert_not_equal projection_before, @loan.payoff_projection.total_interest
+  end
+
+  # Already held before #328: amortization_schedule_signature carries the loan
+  # account's currency. Pinned here because the reader filter depends on it.
+  test "a loaded loan's projection drops offsets stranded by its own currency" do
+    projection_before = @loan.payoff_projection.total_interest
+
+    @loan.account.update_columns(currency: "EUR")
+
+    assert_equal [ @offset.id ], @loan.loan_offset_accounts.pluck(:account_id), "precondition: the link survives"
+    assert_not_equal projection_before, @loan.payoff_projection.total_interest
+  end
+
   # --- what must not change ---------------------------------------------------
 
   test "an update that leaves the currency alone keeps the same link and logs nothing" do

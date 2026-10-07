@@ -15,7 +15,7 @@ class RemoveCrossCurrencyLoanOffsetLinks < ActiveRecord::Migration[8.1]
       WHERE offset_account.id = link.account_id
         AND loan_account.accountable_type = 'Loan'
         AND loan_account.accountable_id = link.loan_id
-        AND offset_account.currency <> loan_account.currency
+        AND offset_account.currency IS DISTINCT FROM loan_account.currency
     SQL
   end
 

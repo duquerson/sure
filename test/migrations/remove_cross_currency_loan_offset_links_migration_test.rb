@@ -24,6 +24,16 @@ class RemoveCrossCurrencyLoanOffsetLinksMigrationTest < ActiveSupport::TestCase
     assert_not LoanOffsetAccount.exists?(@stranded_link.id)
   end
 
+  # accounts.currency is nullable in the database (the model requires it), and
+  # `<>` never matches a NULL.
+  test "deletes a link whose offset has no currency" do
+    @matching_offset.update_columns(currency: nil)
+
+    run_migration
+
+    assert_not LoanOffsetAccount.exists?(@matching_link.id)
+  end
+
   test "keeps a link in the loan's currency, with the same row" do
     run_migration
 
