@@ -679,15 +679,21 @@ class LoansControllerTest < ActionDispatch::IntegrationTest
     loan.update!(rate_type: "variable", offset_account_ids: [ offset.id ])
 
     get account_url(@account, tab: "overview")
+    assert_response :success
     assert_includes response.body, "Variable + offset", "precondition: a matching offset is presented"
     get account_url(@account, tab: "schedule")
+    assert_response :success
     assert_includes response.body, "linked offset balance", "precondition: a matching offset is presented"
 
     offset.update_columns(currency: "EUR")
 
+    # A crashed tab renders an error page without either phrase, so the
+    # absence below means something only on a page that rendered.
     get account_url(@account, tab: "overview")
+    assert_response :success
     assert_not_includes response.body, "Variable + offset"
     get account_url(@account, tab: "schedule")
+    assert_response :success
     assert_not_includes response.body, "linked offset balance"
   end
 
