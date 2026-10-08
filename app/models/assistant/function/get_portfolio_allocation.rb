@@ -16,7 +16,8 @@ class Assistant::Function::GetPortfolioAllocation < Assistant::Function
         Returns how the user's current investment and crypto holdings are split, as the
         portfolio page's allocation does, by one dimension: asset_class, asset_sub_class,
         sector, region, account, currency, kind, tag, or security. Each segment has its
-        value in the family currency and its weight as a percentage of the total.
+        value in the family currency and its weight in the total, as a fraction with
+        a formatted percentage, the same shape as every return in these tools.
 
         look_through (asset_class, asset_sub_class, sector and region only) splits a
         fund into what it holds, where the fund's constituents are known.
@@ -54,7 +55,7 @@ class Assistant::Function::GetPortfolioAllocation < Assistant::Function
       look_through: look_through,
       currency: family.currency,
       segments: segments.map do |segment|
-        { id: segment.id, name: segment.name, value: money(segment.amount), weight_percent: segment.weight.to_d.round(2).to_f }
+        { id: segment.id, name: segment.name, value: money(segment.amount), weight: percent(segment.weight.to_d / 100) }
       end,
       total: money(segments.sum { |segment| segment.amount.is_a?(Money) ? segment.amount.amount : segment.amount.to_d })
     }

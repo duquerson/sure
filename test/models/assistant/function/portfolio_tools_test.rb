@@ -42,7 +42,18 @@ class Assistant::Function::PortfolioToolsTest < ActiveSupport::TestCase
 
     assert_equal expected.map(&:id).sort, result[:segments].map { |s| s[:id] }.sort
     segment = result[:segments].find { |s| s[:id] == @shared.id }
-    assert_equal expected.find { |s| s.id == @shared.id }.weight.to_d.round(2).to_f, segment[:weight_percent]
+    assert_equal (expected.find { |s| s.id == @shared.id }.weight.to_d / 100).round(6).to_f, segment[:weight][:value]
+  end
+
+  # The model's segment weight is already a percentage (25 for a quarter). The
+  # tool reports it as a fraction like every other rate it returns, so the
+  # weights of one dimension add up to 1, not 100.
+  test "allocation weights are fractions of the total, formatted as percentages" do
+    result = call(Assistant::Function::GetPortfolioAllocation, { "by" => "account" })
+
+    assert_in_delta 1.0, result[:segments].sum { |s| s[:weight][:value] }, 0.0001
+    segment = result[:segments].find { |s| s[:id] == @shared.id }
+    assert_equal "#{(segment[:weight][:value].to_d * 100).round(2).to_s("F")}%", segment[:weight][:formatted]
   end
 
   test "income reports the statement's income for the same user and period" do
