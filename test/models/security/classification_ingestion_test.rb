@@ -267,6 +267,93 @@ class Security::ClassificationIngestionTest < ActiveSupport::TestCase
     assert_equal "Technology", @security.reload.sector
   end
 
+  # ------------------------------------------- an empty answer is remembered (#348)
+
+  # The gate closes only when a source, a sector or an industry fills, and an
+  # answer with none of them fills nothing. Without a record that the provider
+  # was asked, every sync asked again -- one of EODHD's 20 daily requests each.
+  test "a capable provider that answers with nothing is asked once" do
+    @security.update!(name: "Apple", logo_url: "https://example.com/aapl.png")
+    provider = capable_provider("provider")
+    provider.stubs(:class).returns(Provider::Eodhd)
+    provider.expects(:fetch_security_info).once.returns(provider_success_response(info))
+    @security.stubs(:price_data_provider).returns(provider)
+
+    assert_nil @security.classification_fetched_at
+    @security.import_provider_details(include_classification: true)
+    assert_not_nil @security.reload.classification_fetched_at, "the empty answer was not recorded"
+
+    @security.import_provider_details(include_classification: true)
+  end
+
+  test "a failed answer is not recorded, so the next sync asks again" do
+    @security.update!(name: "Apple", logo_url: "https://example.com/aapl.png")
+    provider = capable_provider("provider")
+    provider.stubs(:class).returns(Provider::Eodhd)
+    provider.expects(:fetch_security_info).twice.returns(
+      provider_error_response(StandardError.new("rate limited")),
+      provider_success_response(info)
+    )
+    @security.stubs(:price_data_provider).returns(provider)
+
+    @security.import_provider_details(include_classification: true)
+    assert_nil @security.reload.classification_fetched_at, "a failure was recorded as an answer"
+
+    @security.import_provider_details(include_classification: true)
+    assert_not_nil @security.reload.classification_fetched_at
+  end
+
+  test "an answer with a sector is written and recorded" do
+    @security.update!(name: "Apple", logo_url: "https://example.com/aapl.png")
+
+    import(info(sector: "Technology"))
+
+    @security.reload
+    assert_equal "Technology", @security.sector
+    assert_not_nil @security.classification_fetched_at
+  end
+
+  # Capability gates the ask, not the record, as with constituents: a
+  # security synced under a provider that cannot classify must still be asked
+  # once a capable provider is configured.
+  test "a provider that cannot classify leaves no record" do
+    @security.update!(name: "Apple", logo_url: "https://example.com/aapl.png")
+    incapable = capable_provider("incapable", classification: false, constituents: false)
+    incapable.stubs(:class).returns(Provider::TwelveData)
+    incapable.expects(:fetch_security_info).never
+    @security.stubs(:price_data_provider).returns(incapable)
+
+    @security.import_provider_details(include_classification: true)
+
+    assert_nil @security.reload.classification_fetched_at
+  end
+
+  test "a locked security leaves no record" do
+    @security.update!(name: "Apple", logo_url: "https://example.com/aapl.png", classification_locked: true)
+    provider = capable_provider("provider")
+    provider.expects(:fetch_security_info).never
+    @security.stubs(:price_data_provider).returns(provider)
+
+    @security.import_provider_details(include_classification: true)
+
+    assert_nil @security.reload.classification_fetched_at
+  end
+
+  # A forced refresh still asks a security already recorded, and still takes
+  # what the provider now has.
+  test "clear_cache asks a recorded security again" do
+    @security.update!(name: "Apple", logo_url: "https://example.com/aapl.png")
+    @security.update_column(:classification_fetched_at, 1.day.ago)
+    provider = capable_provider("provider")
+    provider.stubs(:class).returns(Provider::Eodhd)
+    provider.expects(:fetch_security_info).once.returns(provider_success_response(info(sector: "Technology")))
+    @security.stubs(:price_data_provider).returns(provider)
+
+    @security.import_provider_details(include_classification: true, clear_cache: true)
+
+    assert_equal "Technology", @security.reload.sector
+  end
+
   private
     def info(sector: nil, industry: nil, kind: nil)
       Provider::SecurityConcept::SecurityInfo.new(
