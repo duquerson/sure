@@ -71,6 +71,8 @@ class Settings::HostingsControllerTest < ActionDispatch::IntegrationTest
     end
 
     %w[
+      uri_base_local_help
+      model_required_help
       model_function_calling_help
       model_function_calling_link
       timeout_heading
@@ -81,6 +83,20 @@ class Settings::HostingsControllerTest < ActionDispatch::IntegrationTest
       ai_response_timeout_help
     ].each do |key|
       assert I18n.exists?("settings.hostings.openai_settings.#{key}", :de, fallback: false)
+    end
+  end
+
+  # A custom base URL needs a model, and the controller refuses one without
+  # it, so the form says so rather than leaving "(Optional)" to mislead. It
+  # also names the local endpoint the hosting docs describe (#131, 12.3).
+  test "the OpenAI settings explain a local model and when the model is required" do
+    with_self_hosting do
+      get settings_hosting_url
+
+      assert_response :success
+      assert_includes response.body, I18n.t("settings.hostings.openai_settings.uri_base_local_help")
+      assert_includes response.body, I18n.t("settings.hostings.openai_settings.model_required_help")
+      assert_includes I18n.t("settings.hostings.openai_settings.uri_base_local_help"), "http://localhost:11434/v1"
     end
   end
 
