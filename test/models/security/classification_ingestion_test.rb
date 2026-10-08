@@ -328,6 +328,36 @@ class Security::ClassificationIngestionTest < ActiveSupport::TestCase
     assert_nil @security.reload.classification_fetched_at
   end
 
+  # The test above never reaches the fetch, so it cannot see a stamp written
+  # on every successful answer. A missing name forces the fetch for a metadata
+  # reason; the answer must still not be recorded as a classification ask, or
+  # the security would never be asked once a capable provider is configured.
+  test "a provider that cannot classify, fetched for its metadata, leaves no record" do
+    @security.update!(name: nil, logo_url: nil, website_url: nil)
+    incapable = capable_provider("incapable", classification: false, constituents: false)
+    incapable.stubs(:class).returns(Provider::TwelveData)
+    incapable.expects(:fetch_security_info).once.returns(provider_success_response(info))
+    @security.stubs(:price_data_provider).returns(incapable)
+
+    @security.import_provider_details(include_classification: true)
+
+    assert_nil @security.reload.classification_fetched_at
+  end
+
+  # Same for a caller that did not ask for a classification: the importers
+  # must still ask on their next pass.
+  test "a caller that has not opted in leaves no record, even when it fetches" do
+    @security.update!(name: nil, logo_url: nil, website_url: nil)
+    provider = capable_provider("provider")
+    provider.stubs(:class).returns(Provider::Eodhd)
+    provider.expects(:fetch_security_info).once.returns(provider_success_response(info))
+    @security.stubs(:price_data_provider).returns(provider)
+
+    @security.import_provider_details
+
+    assert_nil @security.reload.classification_fetched_at
+  end
+
   test "a locked security leaves no record" do
     @security.update!(name: "Apple", logo_url: "https://example.com/aapl.png", classification_locked: true)
     provider = capable_provider("provider")
