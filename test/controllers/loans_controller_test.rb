@@ -782,6 +782,36 @@ class LoansControllerTest < ActionDispatch::IntegrationTest
     assert_empty loan.reload.offset_accounts
   end
 
+  test "saving a loan keeps a valid offset and removes a stale offset link" do
+    loan = @account.accountable
+    valid = shared_offset
+    stale = shared_offset
+    loan.update!(rate_type: "variable", offset_account_ids: [ valid.id, stale.id ])
+    stale.update_columns(currency: "EUR")
+
+    patch loan_path(@account), params: {
+      account: { accountable_attributes: { id: loan.id, offset_account_ids: [ valid.id ] } }
+    }
+
+    assert_redirected_to @account
+    assert_equal [ valid.id ], loan.reload.offset_accounts.pluck(:id)
+  end
+
+  test "deselecting every offset removes valid and stale offset links" do
+    loan = @account.accountable
+    valid = shared_offset
+    stale = shared_offset
+    loan.update!(rate_type: "variable", offset_account_ids: [ valid.id, stale.id ])
+    stale.update_columns(currency: "EUR")
+
+    patch loan_path(@account), params: {
+      account: { accountable_attributes: { id: loan.id, offset_account_ids: [ "" ] } }
+    }
+
+    assert_redirected_to @account
+    assert_empty loan.reload.offset_accounts
+  end
+
   test "an invalid offset edit still renders the explicit empty selection" do
     loan = @account.accountable
     offset = shared_offset
