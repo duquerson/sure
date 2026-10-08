@@ -1,0 +1,62 @@
+# frozen_string_literal: true
+
+class Assistant::Function::GetPortfolioAllocation < Assistant::Function
+  include Assistant::Function::PortfolioSupport
+
+  DIMENSIONS = %w[asset_class asset_sub_class sector region account currency kind tag security].freeze
+  LOOK_THROUGH_DIMENSIONS = %w[asset_class asset_sub_class sector region].freeze
+
+  class << self
+    def name
+      "get_portfolio_allocation"
+    end
+
+    def description
+      <<~INSTRUCTIONS
+        Returns how the user's current investment and crypto holdings are split, as the
+        portfolio page's allocation does, by one dimension: asset_class, asset_sub_class,
+        sector, region, account, currency, kind, tag, or security. Each segment has its
+        value in the family currency and its weight as a percentage of the total.
+
+        look_through (asset_class, asset_sub_class, sector and region only) splits a
+        fund into what it holds, where the fund's constituents are known.
+      INSTRUCTIONS
+    end
+  end
+
+  def strict_mode?
+    false
+  end
+
+  def params_schema
+    build_schema(
+      required: [ "by" ],
+      properties: {
+        by: { type: "string", enum: DIMENSIONS, description: "The dimension to split by" },
+        look_through: { type: "boolean", description: "Split funds into their constituents (classification dimensions only)" }
+      }
+    )
+  end
+
+  def call(params = {})
+    by = params["by"].to_s
+    return portfolio_error("invalid_dimension", "by must be one of: #{DIMENSIONS.join(", ")}.") unless by.in?(DIMENSIONS)
+
+    look_through = ActiveModel::Type::Boolean.new.cast(params["look_through"]) || false
+    if look_through && !by.in?(LOOK_THROUGH_DIMENSIONS)
+      return portfolio_error("invalid_look_through", "look_through applies only to #{LOOK_THROUGH_DIMENSIONS.join(", ")}.")
+    end
+
+    segments = investment_statement.allocation_by(by, look_through: look_through)
+
+    {
+      by: by,
+      look_through: look_through,
+      currency: family.currency,
+      segments: segments.map do |segment|
+        { id: segment.id, name: segment.name, value: money(segment.amount), weight_percent: segment.weight.to_d.round(2).to_f }
+      end,
+      total: money(segments.sum { |segment| segment.amount.is_a?(Money) ? segment.amount.amount : segment.amount.to_d })
+    }
+  end
+end

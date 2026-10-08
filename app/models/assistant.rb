@@ -35,7 +35,12 @@ module Assistant
     Function::RecordBillPayment,
     # Writes PROPOSALS, never classifications -- see the class comment. Preview
     # because the portfolio classification surfaces it feeds are preview-gated.
-    Function::SuggestSecurityClassification
+    Function::SuggestSecurityClassification,
+    # Read-only views of the portfolio pages' figures, preview because those
+    # pages are (#131, 12.1).
+    Function::GetPortfolioPerformance,
+    Function::GetPortfolioAllocation,
+    Function::GetIncomeSummary
   ].freeze
 
   class << self
