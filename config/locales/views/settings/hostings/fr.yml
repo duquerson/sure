@@ -140,7 +140,7 @@ fr:
         title: OpenAI
         uri_base_label: URL de base de l'API (Optionnel)
         uri_base_placeholder: https://api.openai.com/v1 (par défaut)
-        uri_base_local_help: "Pour un modèle sur votre propre machine, saisissez son endpoint compatible OpenAI, par exemple Ollama à http://localhost:11434/v1."
+        uri_base_local_help: "Pour un modèle sur votre propre machine, saisissez son endpoint compatible OpenAI, par exemple Ollama à http://localhost:11434/v1, ou http://ollama:11434/v1 si Sure et Ollama tournent comme services Docker Compose."
       provider_selection:
         binance_public_hint: gratuit, aucune clé API -- crypto uniquement (BTC, ETH, etc.)
         env_configured_message: La sélection du fournisseur est désactivée car des variables d'environnement sont définies. Pour activer la sélection ici, supprimez ces variables d'environnement de votre configuration.

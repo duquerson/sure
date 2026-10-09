@@ -237,7 +237,7 @@ pl:
         title: OpenAI
         uri_base_label: Bazowy URL API (opcjonalne)
         uri_base_placeholder: https://api.openai.com/v1 (domyślnie)
-        uri_base_local_help: "Dla modelu na własnym komputerze wpisz jego endpoint zgodny z OpenAI, na przykład Ollama pod http://localhost:11434/v1."
+        uri_base_local_help: "Dla modelu na własnym komputerze wpisz jego endpoint zgodny z OpenAI, na przykład Ollama pod http://localhost:11434/v1 albo http://ollama:11434/v1, gdy Sure i Ollama działają jako usługi Docker Compose."
       provider_selection:
         binance_public_hint: za darmo, bez klucza API - tylko kryptowaluty (BTC, ETH
           itd.)
