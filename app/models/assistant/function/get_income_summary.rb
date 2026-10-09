@@ -14,6 +14,13 @@ class Assistant::Function::GetIncomeSummary < Assistant::Function
         accounts paid over a period, as the portfolio page's income section shows it:
         income by calendar month, the total, the fees charged over the same period,
         the fee ratio (fees against the average value held), and income by security.
+
+        by_security plus unattributed adds up to the total: unattributed is income
+        with no security recorded, or naming a security this install does not have.
+
+        rate_missing means a dividend, interest payment or fee was in a currency
+        with no exchange rate, so it is left out: the figures may be understated
+        and fee_ratio is null. Say so instead of quoting them as complete.
       INSTRUCTIONS
     end
   end
@@ -32,38 +39,31 @@ class Assistant::Function::GetIncomeSummary < Assistant::Function
 
     performance = investment_statement.performance(period: period)
 
-    unless performance.any?
-      return {
-        period: period_summary(period),
-        available: false,
-        message: "No investment or crypto account history in this period for this user."
-      }
-    end
+    return unavailable(period) unless performance.any? && history_in?(period)
 
     income = performance.income.to_h.with_indifferent_access
+    securities = Portfolio::IncomeBySecurity.new(amounts: income[:by_security], total: income[:total])
 
     {
       period: period_summary(period),
       currency: family.currency,
       available: true,
+      rate_missing: performance.rate_missing?,
       months: Array(income[:buckets]).map { |bucket| { month: bucket[:month], income: money(bucket[:amount]) } },
       total: money(income[:total]),
       fees: money(income[:fees]),
       average_value: money(income[:average_value]),
       fee_ratio: percent(income[:fee_ratio]),
-      by_security: by_security(income[:by_security])
+      by_security: securities.rows.map { |row| by_security_row(row) },
+      unattributed: money(securities.unattributed)
     }
   end
 
   private
-    def by_security(amounts)
-      amounts = amounts.to_h
-      return [] if amounts.empty?
-
-      securities = Security.where(id: amounts.keys).index_by { |security| security.id.to_s }
-      amounts.map do |security_id, amount|
-        security = securities[security_id.to_s]
-        { security_id: security_id, ticker: security&.ticker, name: security&.name, income: money(amount) }
-      end.sort_by { |row| -row[:income][:amount] }
+    # The page's table (Portfolio::IncomeBySecurity): a row per security this
+    # install knows, largest first, and everything else in `unattributed`, so
+    # the rows and the remainder add up to the total by construction.
+    def by_security_row(row)
+      { security_id: row.security.id, ticker: row.security.ticker, name: row.security.name, income: money(row.amount) }
     end
 end

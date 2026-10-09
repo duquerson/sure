@@ -7,7 +7,8 @@
 #
 # Periods are the period picker's presets, except "all_time": its range is
 # anchored on Current.family, which a tool call (a job, or an MCP request) does
-# not set. An explicit start_date/end_date covers any other range.
+# not set. An explicit start_date/end_date covers any other range. The two month
+# presets follow the family's custom month start, as the picker's do.
 module Assistant::Function::PortfolioSupport
   PERIOD_KEYS = %w[current_month last_month last_30_days last_90_days current_year last_365_days last_5_years].freeze
   DEFAULT_PERIOD_KEY = "current_year"
@@ -44,13 +45,41 @@ module Assistant::Function::PortfolioSupport
       key = params["period"].presence || DEFAULT_PERIOD_KEY
       return portfolio_error("invalid_period", "period must be one of: #{PERIOD_KEYS.join(", ")}.") unless key.in?(PERIOD_KEYS)
 
-      key == "current_month" ? Period.current_month_for(family) : Period.from_key(key)
+      case key
+      when "current_month" then Period.current_month_for(family)
+      when "last_month" then Period.last_month_for(family)
+      else Period.from_key(key)
+      end
     rescue Date::Error
       portfolio_error("invalid_date", "Dates must be valid and in YYYY-MM-DD format.")
     end
 
     def investment_statement
       @investment_statement ||= InvestmentStatement.new(family, user: user)
+    end
+
+    # What return method each account's records support over the period, keyed
+    # by account id, for the same accounts #performance measures.
+    def return_scopes(period)
+      @return_scopes ||= {}
+      @return_scopes[[ period.start_date, period.end_date ]] ||= investment_statement.return_scopes(period: period)
+    end
+
+    # Whether any account in scope has a balance row in the period. The daily
+    # rows exist for every calendar day of the period whatever the accounts
+    # hold, so Portfolio::Performance#any? is true for an account with no
+    # history at all, and its return chains to 0%. That is not a measured
+    # portfolio, so the tools report it as unavailable.
+    def history_in?(period)
+      return_scopes(period).values.any? { |scope| scope.balance_days.positive? }
+    end
+
+    def unavailable(period)
+      {
+        period: period_summary(period),
+        available: false,
+        message: "No investment or crypto account history in this period for this user."
+      }
     end
 
     def period_summary(period)

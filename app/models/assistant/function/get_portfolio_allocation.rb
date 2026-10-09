@@ -20,7 +20,9 @@ class Assistant::Function::GetPortfolioAllocation < Assistant::Function
         a formatted percentage, the same shape as every return in these tools.
 
         look_through (asset_class, asset_sub_class, sector and region only) splits a
-        fund into what it holds, where the fund's constituents are known.
+        fund into what it holds, where the fund's constituents are known. The
+        look_through in the result says whether it was actually applied: false
+        when no fund held has known constituents, so the split is the plain one.
       INSTRUCTIONS
     end
   end
@@ -52,7 +54,11 @@ class Assistant::Function::GetPortfolioAllocation < Assistant::Function
 
     {
       by: by,
-      look_through: look_through,
+      # Applied, not requested. The page passes the request through as this
+      # does and offers the toggle only when a held fund has known
+      # constituents; without one the split is the plain one, and echoing the
+      # request would claim a look-through that never happened.
+      look_through: look_through && investment_statement.holds_any_fund_constituents?,
       currency: family.currency,
       segments: segments.map do |segment|
         { id: segment.id, name: segment.name, value: money(segment.amount), weight: percent(segment.weight.to_d / 100) }
